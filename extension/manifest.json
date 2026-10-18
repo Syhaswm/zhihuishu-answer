@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "智慧树答题",
+  "version": "1.0.0",
+  "description": "截获作业题目并调用 DeepSeek 返回答案",
+  "permissions": ["storage"],
+  "host_permissions": ["https://api.deepseek.com/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "智慧树答题",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://onlineexamh5new.zhihuishu.com/*"],
+      "js": ["inject.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://onlineexamh5new.zhihuishu.com/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_start"
+    }
+  ]
+}
