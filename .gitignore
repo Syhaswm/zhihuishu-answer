@@ -4,4 +4,7 @@ profile/
 extension/config.js
 ui/node_modules
 __pycache__/
+build/
+dist/
+installer/
 答案.txt

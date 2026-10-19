@@ -3,8 +3,10 @@
 import ctypes
 import functools
 import json
+import sys
 import threading
 import time
+from pathlib import Path
 from urllib.parse import unquote
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
@@ -13,7 +15,13 @@ import webview
 import answer
 
 LOGIN_URL = "https://passport.zhihuishu.com/login?service=https%3A%2F%2Fonlineweb.zhihuishu.com%2Fonlinestuh5"
-ICON = answer.ROOT / "app.ico"
+def _resource_root():
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+    return answer.ROOT
+
+
+ICON = _resource_root() / "app.ico"
 _ICON_HANDLE = None
 
 
@@ -241,7 +249,7 @@ def _serve(directory):
 
 def main():
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Zhihuishu.Answer")
-    dist = answer.ROOT / "ui" / "dist"
+    dist = _resource_root() / "ui" / "dist"
     index = dist / "index.html"
     if not index.exists():
         raise SystemExit("界面文件缺失。请先在 ui 目录执行 npm install 和 npm run build。")

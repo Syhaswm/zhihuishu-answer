@@ -43,7 +43,13 @@ AES_KEY = b"onbfhdyvz8x7otrp"
 AES_IV = b"1g3qqdh4jvbskb9x"
 API_BASE = "https://api.deepseek.com/chat/completions"
 MODEL = "deepseek-chat"
-ROOT = Path(__file__).resolve().parent
+def _runtime_root():
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+ROOT = _runtime_root()
 
 
 def parse_cookie(raw):
