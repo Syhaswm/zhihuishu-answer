@@ -35,6 +35,7 @@ app.add_middleware(
     ],
     allow_methods=["GET", "POST"],
     allow_headers=["content-type", "x-zhs-timestamp", "x-zhs-sign"],
+    allow_private_network=True,
 )
 
 API_TOKEN = os.environ.get("ZHS_API_TOKEN", "")
@@ -47,7 +48,16 @@ def _sign(timestamp, method, path, body):
 
 
 @app.middleware("http")
+async def allow_private_network(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["Access-Control-Allow-Private-Network"] = "true"
+    return response
+
+
+@app.middleware("http")
 async def require_sign(request: Request, call_next):
+    if request.method == "OPTIONS":
+        return await call_next(request)
     if not API_TOKEN:
         return JSONResponse({"error": "无权访问"}, status_code=401)
     timestamp = request.headers.get("x-zhs-timestamp") or ""

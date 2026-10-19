@@ -11,6 +11,8 @@ installer/
 答案/
 settings.json
 login_result.json
+sync_request.json
+sync_result.json
 src-tauri/target
 src-tauri/gen
 node_modules

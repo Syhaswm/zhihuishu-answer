@@ -5,6 +5,7 @@ import ctypes
 import functools
 import json
 import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -337,21 +338,51 @@ class Api:
         if not force and "polymas-token=" in cookie and "AI-POLY-UINFO=" in cookie:
             return cookie
         self._progress("正在打开这份作业页，同步 AI 教学中心登录…")
-        self._ensure_login_window()
-        self._login.load_url(url)
+        if webview.guilib is None:
+            return self._sync_polymas_process(url)
+        try:
+            self._ensure_login_window()
+            self._login.load_url(url)
+        except Exception as exc:
+            raise RuntimeError("登录窗口没有打开。请点「切换账号」重新登录后再获取答案。") from exc
         deadline = time.time() + 20
         while time.time() < deadline:
             time.sleep(1.2)
             cookie = self._merge_cookie(cookie, self._cookies_from_login())
             if "polymas-token=" in cookie and "AI-POLY-UINFO=" in cookie:
                 self._save_cookie(cookie)
+                self._hide_login()
                 return cookie
-        self._save_cookie(cookie)
+        self._hide_login()
+        raise RuntimeError("没有读到 AI 教学中心的登录。请点「切换账号」重新登录后再获取答案。")
+
+    def _sync_polymas_process(self, url):
+        request_path = answer.ROOT / "sync_request.json"
+        result_path = answer.ROOT / "sync_result.json"
+        if result_path.exists():
+            result_path.unlink()
+        request_path.write_text(json.dumps({"url": url}, ensure_ascii=False), encoding="utf-8")
+        pythonw = Path(sys.executable).with_name("pythonw.exe")
+        exe = str(pythonw if pythonw.exists() else sys.executable)
+        script = answer.ROOT / "server" / "login_proc.py"
+        proc = subprocess.Popen([exe, str(script), "--sync"], cwd=str(answer.ROOT))
+        deadline = time.time() + 50
+        while time.time() < deadline:
+            if result_path.exists() or proc.poll() is not None:
+                break
+            time.sleep(0.4)
+        else:
+            proc.kill()
+            raise RuntimeError("同步 AI 教学中心登录超时。请点「切换账号」重新登录后再获取答案。")
+        if not result_path.exists():
+            raise RuntimeError("没能打开作业页同步登录。请点「切换账号」重新登录后再获取答案。")
         try:
-            self._login.show()
-        except Exception:
-            pass
-        return cookie
+            data = json.loads(result_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("同步登录的结果读不出来。请再点一次获取答案。") from exc
+        if not data.get("ok"):
+            raise RuntimeError(data.get("error") or "没有读到 AI 教学中心的登录。请点「切换账号」重新登录后再获取答案。")
+        return self._saved_cookie()
 
     def begin_login(self, switch_account=False):
         self._progress("请在弹出的窗口登录智慧树，登录成功后会自动保存")
