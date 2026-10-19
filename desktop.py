@@ -108,6 +108,7 @@ class Api:
         self._login = None
         self._batch_label = ""
         self._progress_lock = threading.Lock()
+        self._on_progress = None
 
     def load_settings(self):
         try:
@@ -208,6 +209,12 @@ class Api:
     def _progress(self, message):
         if self._batch_label:
             message = self._batch_label + message
+        if self._on_progress:
+            try:
+                self._on_progress(message)
+            except Exception:
+                pass
+            return
         script = "window.onSolveProgress && window.onSolveProgress(%s)" % json.dumps(
             message, ensure_ascii=False
         )

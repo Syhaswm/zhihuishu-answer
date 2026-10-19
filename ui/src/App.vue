@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
 import { BackTop, Banner, Button, Card, Checkbox, Input, Modal, Pagination, Switch, Tag, TextArea, Toast } from "@kousum/semi-ui-vue";
+import * as api from "./api";
 
 const url = ref("");
 const apiKey = ref("");
@@ -49,8 +50,19 @@ function scrollTarget() {
 }
 
 async function loadSettings() {
-  if (!window.pywebview?.api) return;
-  const data = await window.pywebview.api.load_settings();
+  let data = null;
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    try {
+      data = await api.loadSettings();
+      break;
+    } catch (err) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+  if (!data) {
+    status.value = "答题服务还没启动，请稍等再打开一次。";
+    return;
+  }
   apiKey.value = data.apiKey || "";
   accountName.value = data.name || "";
   saveAnswers.value = data.saveAnswers !== false;
@@ -60,17 +72,23 @@ async function loadSettings() {
   }
 }
 
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function login() {
   error.value = "";
-  if (typeof window.pywebview?.api?.begin_login !== "function") {
-    error.value = "窗口还在准备，请过一两秒再点登录账号。";
-    return;
-  }
   loggingIn.value = true;
   status.value = "请在弹出的窗口登录，成功后会自动保存。";
   try {
-    const resp = await window.pywebview.api.begin_login(Boolean(accountName.value));
-    if (!resp || !resp.ok) throw new Error((resp && resp.error) || "没有保存登录");
+    await api.beginLogin(Boolean(accountName.value));
+    let resp = { pending: true };
+    for (let attempt = 0; attempt < 240 && resp.pending; attempt += 1) {
+      await wait(500);
+      resp = await api.loginStatus();
+    }
+    if (resp.pending) throw new Error("登录窗口等待超时。需要登录时再点一次。");
+    if (!resp.ok) throw new Error(resp.error || "没有保存登录");
     accountName.value = resp.name || "已登录";
     status.value = "已保存登录：" + accountName.value + "。现在可以获取答案。";
     Toast.success("登录已保存");
@@ -79,7 +97,7 @@ async function login() {
     error.value = message;
     status.value = message;
     try {
-      const data = await window.pywebview.api.load_settings();
+      const data = await api.loadSettings();
       accountName.value = data.name || "";
     } catch (ignore) {
       /* 账号显示保持原样 */
@@ -90,14 +108,7 @@ async function login() {
 }
 
 onMounted(() => {
-  window.onSolveProgress = (message) => {
-    status.value = message;
-  };
-  if (window.pywebview?.api) {
-    loadSettings();
-    return;
-  }
-  window.addEventListener("pywebviewready", loadSettings, { once: true });
+  loadSettings();
 });
 
 function displayParts(question) {
@@ -122,11 +133,11 @@ async function copyText(value) {
 }
 
 async function openKeyPage() {
-  if (typeof window.pywebview?.api?.open_url === "function") {
-    await window.pywebview.api.open_url(keyPage);
-    return;
+  try {
+    await api.openUrl(keyPage);
+  } catch (err) {
+    window.open(keyPage, "_blank");
   }
-  window.open(keyPage, "_blank");
 }
 
 function isChecked(event) {
@@ -149,16 +160,14 @@ async function changeSave(event) {
   const enabled = isChecked(event);
   saveAnswers.value = enabled;
   confirmAll.value = false;
-  if (typeof window.pywebview?.api?.set_save_answers !== "function") return;
-  const data = await window.pywebview.api.set_save_answers(enabled);
+  const data = await api.setSaveAnswers(enabled);
   saveAnswers.value = data.saveAnswers !== false;
   answerFiles.value = data.files || [];
   Toast.success(saveAnswers.value ? "之后会写入答案文件夹" : "之后不再写入答案文件");
 }
 
 async function refreshFiles() {
-  if (typeof window.pywebview?.api?.list_answers !== "function") return;
-  const data = await window.pywebview.api.list_answers();
+  const data = await api.listAnswers();
   answerFiles.value = data.files || [];
   selectedFiles.value = selectedFiles.value.filter((name) =>
     answerFiles.value.some((file) => file.name === name)
@@ -170,7 +179,7 @@ async function removeSelected() {
     Toast.warning("先勾选要删除的文件");
     return;
   }
-  const data = await window.pywebview.api.delete_answers([...selectedFiles.value]);
+  const data = await api.deleteAnswers([...selectedFiles.value]);
   answerFiles.value = data.files || [];
   selectedFiles.value = [];
   confirmAll.value = false;
@@ -182,7 +191,7 @@ async function removeAll() {
     confirmAll.value = true;
     return;
   }
-  const data = await window.pywebview.api.delete_all_answers();
+  const data = await api.deleteAllAnswers();
   answerFiles.value = data.files || [];
   selectedFiles.value = [];
   confirmAll.value = false;
@@ -201,14 +210,12 @@ async function start() {
     error.value = "请输入作业页地址，每行一个。";
     return;
   }
-  if (typeof window.pywebview?.api?.solve_batch !== "function") {
-    error.value = "窗口还在准备，请过一两秒再点获取答案。";
-    return;
-  }
   loading.value = true;
   status.value = "正在同时获取每一份作业…";
   try {
-    const resp = await window.pywebview.api.solve_batch(url.value, apiKey.value);
+    const resp = await api.solveBatch(url.value, apiKey.value, (message) => {
+      status.value = message;
+    });
     if (!resp) throw new Error("没有返回结果");
     papers.value = resp.papers || [];
     page.value = 1;

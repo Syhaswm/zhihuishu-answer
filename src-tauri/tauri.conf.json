@@ -1,0 +1,32 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "智慧树答题",
+  "version": "1.4.0",
+  "identifier": "com.zhihuishu.answer",
+  "build": {
+    "beforeDevCommand": "npm run dev --prefix ui",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build --prefix ui",
+    "frontendDist": "../ui/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "智慧树答题",
+        "width": 1080,
+        "height": 800,
+        "minWidth": 880,
+        "minHeight": 640,
+        "resizable": true,
+        "additionalBrowserArgs": "--proxy-server=direct:// --proxy-bypass-list=<-loopback>;localhost;127.0.0.1;*.localhost"
+      }
+    ],
+    "security": { "csp": null }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/icon.ico"]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "zhihuishu-answer",
+  "private": true,
+  "version": "1.4.0",
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev"
+  },
+  "dependencies": {
+    "@tauri-apps/cli": "^2.12.3"
+  }
+}

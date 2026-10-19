@@ -10,3 +10,7 @@ installer/
 答案.txt
 答案/
 settings.json
+login_result.json
+src-tauri/target
+src-tauri/gen
+node_modules
