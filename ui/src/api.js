@@ -55,6 +55,19 @@ async function request(path, options) {
   return data;
 }
 
+export async function appVersion() {
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke("app_version");
+}
+
+export function checkUpdate(current) {
+  return request("/api/update", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ current }),
+  });
+}
+
 export function loadSettings() {
   return request("/api/settings");
 }

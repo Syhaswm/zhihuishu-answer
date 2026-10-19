@@ -208,7 +208,11 @@ class Api:
 
     def open_url(self, url):
         target = str(url or "").strip()
-        if not target.startswith("https://platform.deepseek.com"):
+        allowed = (
+            target.startswith("https://platform.deepseek.com"),
+            target.startswith("https://gitee.com/Syhaswm/zhihuishu-answer/releases/"),
+        )
+        if not any(allowed):
             return {"ok": False}
         webbrowser.open(target)
         return {"ok": True}

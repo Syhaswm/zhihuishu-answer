@@ -20,6 +20,7 @@ const confirmAll = ref(false);
 const page = ref(1);
 const paperAnchor = ref(null);
 const helpOpen = ref(false);
+const updateInfo = ref(null);
 const keyPage = "https://platform.deepseek.com/api_keys";
 
 const currentPaper = computed(() => papers.value[page.value - 1] || null);
@@ -107,8 +108,25 @@ async function login() {
   }
 }
 
+async function downloadUpdate() {
+  const url = updateInfo.value && updateInfo.value.url;
+  if (!url) return;
+  try {
+    await api.openUrl(url);
+  } catch (err) {
+    window.open(url, "_blank");
+  }
+}
+
 onMounted(() => {
   loadSettings();
+  api
+    .appVersion()
+    .then((current) => api.checkUpdate(current))
+    .then((info) => {
+      if (info && info.update) updateInfo.value = info;
+    })
+    .catch(() => {});
 });
 
 function displayParts(question) {
@@ -243,6 +261,12 @@ async function start() {
         </div>
         <Button @click="helpOpen = true">帮助</Button>
       </header>
+
+      <div v-if="updateInfo" class="update-bar">
+        <span>发现新版本 {{ updateInfo.latest }}，当前是 {{ updateInfo.current }}。</span>
+        <Button size="small" theme="solid" type="primary" @click="downloadUpdate">下载更新</Button>
+        <Button size="small" @click="updateInfo = null">关闭</Button>
+      </div>
 
       <Card class="form-card" :bodyStyle="{ padding: '18px 18px 14px' }">
         <div class="field">

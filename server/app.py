@@ -102,6 +102,18 @@ class LoginIn(BaseModel):
     switch: bool = False
 
 
+class UpdateIn(BaseModel):
+    current: str = ""
+
+
+def _version_key(text):
+    numbers = []
+    for part in str(text or "").replace("v", " ").replace("V", " ").replace(".", " ").split():
+        if part.isdigit():
+            numbers.append(int(part))
+    return tuple(numbers[:3])
+
+
 def _pythonw():
     candidate = Path(sys.executable).with_name("pythonw.exe")
     return str(candidate if candidate.exists() else sys.executable)
@@ -140,6 +152,35 @@ def delete_all_answers():
 @app.post("/api/open-url")
 def open_url(body: OpenIn):
     return api.open_url(body.url)
+
+
+@app.post("/api/update")
+def check_update(body: UpdateIn):
+    current = str(body.current or "").strip()
+    try:
+        response = answer.session().get(
+            "https://gitee.com/api/v5/repos/Syhaswm/zhihuishu-answer/releases",
+            params={"page": 1, "per_page": 20, "direction": "desc"},
+            timeout=8,
+        )
+        releases = response.json()
+    except Exception:
+        return {"update": False, "current": current}
+    if not isinstance(releases, list) or not releases:
+        return {"update": False, "current": current}
+    payload = max(releases, key=lambda item: _version_key(item.get("tag_name")))
+    latest = str(payload.get("tag_name") or "").lstrip("vV")
+    if not latest or _version_key(latest) <= _version_key(current):
+        return {"update": False, "current": current, "latest": latest}
+    download = ""
+    for asset in payload.get("assets") or []:
+        name = str(asset.get("name") or "")
+        if name.endswith("Setup.exe"):
+            download = str(asset.get("browser_download_url") or "")
+            break
+    if not download:
+        download = f"https://gitee.com/Syhaswm/zhihuishu-answer/releases/tag/v{latest}"
+    return {"update": True, "current": current, "latest": latest, "url": download}
 
 
 @app.post("/api/login")

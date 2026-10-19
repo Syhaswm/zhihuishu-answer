@@ -2,3 +2,8 @@
 identifier = "allow-api-token"
 description = "读取本次启动的本机接口口令"
 commands.allow = ["api_token"]
+
+[[permission]]
+identifier = "allow-app-version"
+description = "读取当前软件版本"
+commands.allow = ["app_version"]

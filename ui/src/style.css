@@ -55,6 +55,18 @@ body {
   font-size: 13px;
 }
 
+.update-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -6px 0 16px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #e8f3ff;
+  color: #1c4c8c;
+  font-size: 13px;
+}
+
 .help h2 {
   margin: 18px 0 8px;
   font-size: 15px;

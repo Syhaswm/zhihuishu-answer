@@ -19,6 +19,11 @@ fn api_token(state: tauri::State<AppSecrets>) -> String {
     state.token.clone()
 }
 
+#[tauri::command]
+fn app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
 fn bundled_root() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
@@ -121,7 +126,7 @@ pub fn run() {
             token: token.clone(),
             api: Mutex::new(start_api(&token)),
         })
-        .invoke_handler(tauri::generate_handler![api_token])
+        .invoke_handler(tauri::generate_handler![api_token, app_version])
         .setup(|_app| Ok(()))
         .build(tauri::generate_context!())
         .expect("启动窗口失败")
