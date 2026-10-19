@@ -19,7 +19,30 @@ fn api_token(state: tauri::State<AppSecrets>) -> String {
     state.token.clone()
 }
 
-fn python_executable() -> PathBuf {
+fn bundled_root() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    let python = dir.join("runtime").join("python.exe");
+    let app = dir.join("server").join("app.py");
+    if python.is_file() && app.is_file() {
+        Some(dir.to_path_buf())
+    } else {
+        None
+    }
+}
+
+fn app_root() -> PathBuf {
+    if let Some(root) = bundled_root() {
+        return root;
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
+}
+
+fn python_executable(root: &std::path::Path) -> PathBuf {
+    let bundled = root.join("runtime").join("python.exe");
+    if bundled.is_file() {
+        return bundled;
+    }
     let configured = PathBuf::from(r"D:\anaconda_conda\envs\full-stack\python.exe");
     if configured.is_file() {
         return configured;
@@ -41,8 +64,8 @@ fn stop_stale_api() {
 
 fn start_api(token: &str) -> Option<Child> {
     stop_stale_api();
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
-    let mut command = Command::new(python_executable());
+    let root = app_root();
+    let mut command = Command::new(python_executable(&root));
     command
         .args([
             "-m",
@@ -56,7 +79,15 @@ fn start_api(token: &str) -> Option<Child> {
             "warning",
         ])
         .env("ZHS_API_TOKEN", token)
-        .current_dir(root);
+        .env("PYTHONNOUSERSITE", "1")
+        .env("PYTHONDONTWRITEBYTECODE", "1")
+        .current_dir(&root);
+    if let Ok(log) = std::fs::File::create(root.join("api.log")) {
+        if let Ok(err_log) = log.try_clone() {
+            use std::process::Stdio;
+            command.stdout(Stdio::from(log)).stderr(Stdio::from(err_log));
+        }
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

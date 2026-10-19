@@ -7,12 +7,14 @@ __pycache__/
 build/
 dist/
 installer/
+portable/
 答案.txt
 答案/
 settings.json
 login_result.json
 sync_request.json
 sync_result.json
+api.log
 src-tauri/target
 src-tauri/gen
 node_modules

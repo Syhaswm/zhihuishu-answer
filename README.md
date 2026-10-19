@@ -2,7 +2,7 @@
 
 桌面工具。粘贴智慧树作业页地址后，读取题目并用 DeepSeek 生成参考答案。支持普通作业页和 AI 教学中心答题页。程序只读题目，不会交卷。
 
-当前版本：1.5.2
+当前版本：1.6.0
 
 ## 免责声明
 
@@ -41,7 +41,7 @@ Copyright (C) 2026 Zephyr
 
 更细的操作步骤见 [使用说明](使用说明.md)。发行版在 [Gitee Releases](https://gitee.com/Syhaswm/zhihuishu-answer/releases)。
 
-发行版中的 `智慧树答题.exe` 会启动本仓库里的答题服务，需要本机已经有这份源码和对应的 Python 环境。
+发行版里的 `智慧树答题-Setup.exe` 自带答题服务，安装后不需要再装 Python。源码在本仓库。
 
 ## 本地数据
 
