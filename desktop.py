@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from urllib.parse import unquote
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -104,6 +105,8 @@ class Api:
     def __init__(self):
         self._main = None
         self._login = None
+        self._batch_label = ""
+        self._progress_lock = threading.Lock()
 
     def load_settings(self):
         try:
@@ -129,13 +132,16 @@ class Api:
         return {"ok": True}
 
     def _progress(self, message):
+        if self._batch_label:
+            message = self._batch_label + message
         script = "window.onSolveProgress && window.onSolveProgress(%s)" % json.dumps(
             message, ensure_ascii=False
         )
-        try:
-            self._main.evaluate_js(script)
-        except Exception:
-            pass
+        with self._progress_lock:
+            try:
+                self._main.evaluate_js(script)
+            except Exception:
+                pass
 
     def _saved_cookie(self):
         path = answer.ROOT / "cookie.txt"
@@ -300,37 +306,165 @@ class Api:
             return {"ok": True, "name": name}
         return {"ok": False, "error": "还没有读到登录信息。请在弹出的窗口完成登录后再点一次登录账号。"}
 
-    def solve(self, url, api_key):
+    def _prepare_solve(self, api_key):
         api_key = str(api_key or "").strip()
         if api_key:
             (answer.ROOT / "apikey.txt").write_text(api_key + "\n", encoding="utf-8")
         cookie = self._saved_cookie()
         if not _has_auth(cookie):
-            return {"ok": False, "error": "请先点「登录账号」，在弹出的窗口登录。登录只会在你点这个按钮时进行。"}
+            raise RuntimeError("请先点「登录账号」，在弹出的窗口登录。登录只会在你点这个按钮时进行。")
         if _token_expired(cookie):
-            return {"ok": False, "error": "登录已过期。请点「切换账号」，在弹出的窗口重新登录后再获取答案。"}
-        try:
+            raise RuntimeError("登录已过期。请点「切换账号」，在弹出的窗口重新登录后再获取答案。")
+        return api_key, cookie
+
+    def _solve_one(self, url, api_key, cookie, folder, index):
+        def once(current):
             if answer.is_polymas_url(url):
-                cookie = self._sync_polymas(url, cookie)
-            result = answer.run(url, cookie=cookie, api_key=api_key, on_progress=self._progress)
+                current = self._sync_polymas(url, current)
+            result = answer.run(
+                url,
+                cookie=current,
+                api_key=api_key,
+                on_progress=self._progress,
+                folder=folder,
+                index=index,
+            )
+            return result, current
+
+        try:
+            result, cookie = once(cookie)
         except RuntimeError as exc:
             text = str(exc)
             if "参数" not in text and "不属于" not in text and "登录" not in text and "失效" not in text:
-                return {"ok": False, "error": text}
+                raise
             if answer.is_polymas_url(url):
                 cookie = self._sync_polymas(url, cookie, force=True)
             else:
                 cookie = self._harvest(cookie)
             if not _has_auth(cookie):
-                return {"ok": False, "error": "登录信息不完整。请点「切换账号」重新登录。"}
-            try:
-                result = answer.run(url, cookie=cookie, api_key=api_key, on_progress=self._progress)
-            except Exception as exc2:
-                return {"ok": False, "error": str(exc2)}
+                raise RuntimeError("登录信息不完整。请点「切换账号」重新登录。") from exc
+            result, cookie = once(cookie)
+        result["ok"] = True
+        result["url"] = url
+        return result, cookie
+
+    def solve(self, url, api_key):
+        try:
+            api_key, cookie = self._prepare_solve(api_key)
+            result, _cookie = self._solve_one(url, api_key, cookie, None, 1)
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
-        result["ok"] = True
         return result
+
+    def _failed_paper(self, index, url, exc):
+        return {
+            "ok": False,
+            "url": url,
+            "title": f"第 {index + 1} 份没有取到",
+            "course": "",
+            "error": str(exc or "没有返回题目"),
+            "questions": [],
+            "text": "",
+            "file": "",
+            "path": "",
+        }
+
+    def _should_retry(self, exc):
+        text = str(exc or "")
+        return any(word in text for word in ("参数", "不属于", "登录", "失效"))
+
+    def _fetch_all(self, urls, cookie):
+        if not urls:
+            return [], []
+        fetched = [None] * len(urls)
+        errors = [None] * len(urls)
+        workers = min(answer.PARALLEL, len(urls))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {
+                pool.submit(answer.fetch_homework, url, cookie): index
+                for index, url in enumerate(urls)
+            }
+            for future in as_completed(futures):
+                index = futures[future]
+                try:
+                    fetched[index] = future.result()
+                except Exception as exc:
+                    errors[index] = exc
+        return fetched, errors
+
+    def solve_batch(self, text, api_key):
+        urls = answer.split_homework_urls(text)
+        if not urls:
+            return {"ok": False, "error": "请输入作业页地址，每行一个。", "papers": []}
+        try:
+            api_key, cookie = self._prepare_solve(api_key)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc), "papers": []}
+        folder = answer.ROOT / "答案"
+        total = len(urls)
+        for url in urls:
+            if answer.is_polymas_url(url):
+                cookie = self._sync_polymas(url, cookie)
+        self._progress(f"正在同时拉取 {total} 份题目…")
+        fetched, errors = self._fetch_all(urls, cookie)
+        if any(self._should_retry(errors[i]) for i in range(total)):
+            cookie = self._harvest(cookie)
+            retry_urls = [(i, urls[i]) for i in range(total) if self._should_retry(errors[i])]
+            refetched, reerrors = self._fetch_all([url for _i, url in retry_urls], cookie)
+            for (i, _url), exam, exc in zip(retry_urls, refetched, reerrors):
+                fetched[i] = exam
+                errors[i] = exc
+        jobs = []
+        for index, exam in enumerate(fetched):
+            if not exam:
+                continue
+            for chunk in answer.question_chunks(exam["questions"]):
+                jobs.append((index, chunk))
+        found = {index: {} for index in range(total)}
+        chunk_errors = {}
+        if jobs:
+            self._progress(f"正在同时解答 {len(jobs)} 组题目…")
+            done = 0
+            with answer.pinned_deepseek():
+                workers = min(answer.PARALLEL, len(jobs))
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    futures = {
+                        pool.submit(answer.ask_chunk, api_key, chunk): (index, chunk)
+                        for index, chunk in jobs
+                    }
+                    for future in as_completed(futures):
+                        index, chunk = futures[future]
+                        done += 1
+                        try:
+                            for item in future.result():
+                                found[index][item["n"]] = item
+                        except Exception as exc:
+                            chunk_errors.setdefault(index, exc)
+                        self._progress(f"解答进度 {done}/{len(jobs)}")
+        papers = []
+        for index, url in enumerate(urls):
+            exam = fetched[index]
+            if errors[index] or exam is None:
+                papers.append(self._failed_paper(index, url, errors[index]))
+                continue
+            if index in chunk_errors and not found[index]:
+                papers.append(self._failed_paper(index, url, chunk_errors[index]))
+                continue
+            answer.apply_answers(exam, found[index])
+            result = answer.result_payload(exam, folder=folder, index=index + 1)
+            result["ok"] = True
+            result["url"] = url
+            papers.append(result)
+        done = sum(1 for paper in papers if paper.get("ok"))
+        failed = total - done
+        if done and failed:
+            summary = f"完成 {done} 份，{failed} 份没有取到。成功的答案分别保存在「答案」文件夹。"
+        elif done:
+            summary = f"完成 {done} 份。每份答案单独保存在「答案」文件夹。"
+        else:
+            summary = "这几份作业都没有取到答案。"
+        self._progress(summary)
+        return {"ok": done > 0, "error": "" if done else summary, "papers": papers, "summary": summary}
 
 
 def _serve(directory):

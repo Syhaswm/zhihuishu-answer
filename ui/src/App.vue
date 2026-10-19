@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
-import { BackTop, Banner, Button, Card, Input, Modal, Tag, Toast } from "@kousum/semi-ui-vue";
+import { BackTop, Banner, Button, Card, Input, Modal, Pagination, Tag, TextArea, Toast } from "@kousum/semi-ui-vue";
 
 const url = ref("");
 const apiKey = ref("");
@@ -10,17 +10,20 @@ const loggingIn = ref(false);
 const accountName = ref("");
 const status = ref("先点登录账号，在弹出的窗口登录。之后获取答案会一直用这个账号。");
 const error = ref("");
-const course = ref("");
-const title = ref("");
-const questions = ref([]);
-const text = ref("");
+const papers = ref([]);
+const page = ref(1);
+const paperAnchor = ref(null);
 const helpOpen = ref(false);
 const keyPage = "https://platform.deepseek.com/api_keys";
 
-const heading = computed(() => {
-  if (!title.value) return "";
-  return course.value ? `${course.value} · ${title.value}` : title.value;
-});
+const currentPaper = computed(() => papers.value[page.value - 1] || null);
+
+function showPage(next) {
+  const total = papers.value.length;
+  const value = Math.min(Math.max(Number(next) || 1, 1), total || 1);
+  page.value = value;
+  paperAnchor.value?.scrollIntoView({ block: "start" });
+}
 
 function answerParts(question) {
   return String(question.answer || "")
@@ -116,36 +119,33 @@ async function openKeyPage() {
   window.open(keyPage, "_blank");
 }
 
-async function copyAnswers() {
-  if (!text.value) return;
-  try {
-    await navigator.clipboard.writeText(text.value);
-    Toast.success("答案已复制");
-  } catch (err) {
-    error.value = "复制失败，请从下方卡片里手动选择";
-  }
+function paperTitle(paper) {
+  if (!paper.ok) return paper.title || "这份作业没有取到";
+  return paper.course ? `${paper.course} · ${paper.title}` : paper.title || "作业";
 }
 
 async function start() {
   error.value = "";
+  papers.value = [];
   if (!url.value.trim()) {
-    error.value = "请输入作业页地址。";
+    error.value = "请输入作业页地址，每行一个。";
     return;
   }
-  if (typeof window.pywebview?.api?.solve !== "function") {
+  if (typeof window.pywebview?.api?.solve_batch !== "function") {
     error.value = "窗口还在准备，请过一两秒再点获取答案。";
     return;
   }
   loading.value = true;
-  status.value = "正在拉取题目…";
+  status.value = "正在同时获取每一份作业…";
   try {
-    const resp = await window.pywebview.api.solve(url.value.trim(), apiKey.value);
-    if (!resp || !resp.ok) throw new Error((resp && resp.error) || "没有返回结果");
-    course.value = resp.course || "";
-    title.value = resp.title || "";
-    questions.value = resp.questions || [];
-    text.value = resp.text || "";
-    status.value = `已返回 ${questions.value.length} 题，并写入答案.txt`;
+    const resp = await window.pywebview.api.solve_batch(url.value, apiKey.value);
+    if (!resp) throw new Error("没有返回结果");
+    papers.value = resp.papers || [];
+    page.value = 1;
+    status.value = resp.summary || "";
+    if (!resp.ok && !papers.value.length) {
+      error.value = resp.error || "没有返回结果";
+    }
   } catch (err) {
     error.value = err.message || String(err);
   } finally {
@@ -161,7 +161,7 @@ async function start() {
         <img class="logo" src="/icon.png" alt="" />
         <div class="brand-copy">
           <h1>智慧树答题</h1>
-          <p>输入作业地址，返回答案。用谁的账号登录，就查谁的作业。</p>
+          <p>多份作业一次只显示一份，用分页切换。每份答案分开保存。</p>
         </div>
         <Button @click="helpOpen = true">帮助</Button>
       </header>
@@ -169,9 +169,10 @@ async function start() {
       <Card class="form-card" :bodyStyle="{ padding: '18px 18px 14px' }">
         <div class="field">
           <div class="field-label">作业页地址</div>
-          <Input
+          <TextArea
             :value="url"
-            placeholder="粘贴作业做题页地址，支持普通作业页和 AI 教学中心答题页"
+            :rows="5"
+            placeholder="每行粘贴一个作业做题页地址。普通作业页和 AI 教学中心答题页都可以。"
             @change="(value) => (url = value)"
           />
         </div>
@@ -190,61 +191,84 @@ async function start() {
             {{ accountName ? "切换账号" : "登录账号" }}
           </Button>
           <Button theme="solid" type="primary" :loading="loading" :disabled="loggingIn" @click="start">获取答案</Button>
-          <Button :disabled="!text" @click="copyAnswers">复制答案</Button>
         </div>
         <div class="status">{{ status }}</div>
       </Card>
 
       <Banner v-if="error" class="alert" type="danger" :description="error" />
 
-      <div v-if="heading" class="summary">
-        <strong>{{ heading }}</strong>
-        <span>{{ questions.length }} 题</span>
-      </div>
-
-      <div class="q-list">
-        <Card
-          v-for="question in questions"
-          :key="question.n"
-          :bodyStyle="{ padding: '14px 16px' }"
-        >
-          <div class="q-head">
-            <span class="q-no">{{ question.n }}.</span>
-            <Tag size="small" color="blue">{{ question.type }}</Tag>
-            <Tag v-if="question.score" size="small">{{ question.score }}分</Tag>
+      <section v-if="currentPaper" ref="paperAnchor" class="paper">
+        <Pagination
+          v-if="papers.length > 1"
+          class="pager"
+          :total="papers.length"
+          :pageSize="1"
+          :currentPage="page"
+          size="small"
+          @pageChange="showPage"
+        />
+        <div class="paper-head">
+          <div class="paper-copy">
+            <strong>{{ paperTitle(currentPaper) }}</strong>
+            <span v-if="currentPaper.ok">第 {{ page }} / {{ papers.length }} 份 · {{ currentPaper.questions.length }} 题 · 答案/{{ currentPaper.file }}</span>
+            <span v-else class="paper-url">第 {{ page }} / {{ papers.length }} 份 · {{ currentPaper.url }}</span>
           </div>
-          <div class="stem">{{ question.stem }}</div>
-          <div v-if="question.options.length" class="options">
-            <div
-              v-for="option in question.options"
-              :key="option"
-              class="option"
-              :class="{ 'is-hit': isHit(question, option) }"
-            >
-              <span v-if="isHit(question, option)" class="option-mark">正确</span>
-              {{ option }}
+          <Button v-if="currentPaper.ok" size="small" @click="copyText(currentPaper.text)">复制本份</Button>
+        </div>
+        <Banner v-if="!currentPaper.ok" class="alert" type="danger" :description="currentPaper.error" />
+        <div v-else class="q-list">
+          <Card
+            v-for="question in currentPaper.questions"
+            :key="`${page}-${question.n}`"
+            :bodyStyle="{ padding: '14px 16px' }"
+          >
+            <div class="q-head">
+              <span class="q-no">{{ question.n }}.</span>
+              <Tag size="small" color="blue">{{ question.type }}</Tag>
+              <Tag v-if="question.score" size="small">{{ question.score }}分</Tag>
             </div>
-          </div>
-          <div v-for="(part, index) in displayParts(question)" :key="index" class="answer">
-            <span class="answer-text">
-              <template v-if="part.label">{{ part.label }} </template>
-              <template v-else>答案：</template>
-              {{ part.text || "（无）" }}
-            </span>
-            <Button
-              v-if="!question.options.length"
-              size="small"
-              theme="solid"
-              type="primary"
-              :disabled="!part.text"
-              @click="copyText(part.text)"
-            >
-              复制
-            </Button>
-          </div>
-          <div v-if="question.reason" class="reason">{{ question.reason }}</div>
-        </Card>
-      </div>
+            <div class="stem">{{ question.stem }}</div>
+            <div v-if="question.options.length" class="options">
+              <div
+                v-for="option in question.options"
+                :key="option"
+                class="option"
+                :class="{ 'is-hit': isHit(question, option) }"
+              >
+                <span v-if="isHit(question, option)" class="option-mark">正确</span>
+                {{ option }}
+              </div>
+            </div>
+            <div v-for="(part, index) in displayParts(question)" :key="index" class="answer">
+              <span class="answer-text">
+                <template v-if="part.label">{{ part.label }} </template>
+                <template v-else>答案：</template>
+                {{ part.text || "（无）" }}
+              </span>
+              <Button
+                v-if="!question.options.length"
+                size="small"
+                theme="solid"
+                type="primary"
+                :disabled="!part.text"
+                @click="copyText(part.text)"
+              >
+                复制
+              </Button>
+            </div>
+            <div v-if="question.reason" class="reason">{{ question.reason }}</div>
+          </Card>
+        </div>
+        <Pagination
+          v-if="papers.length > 1"
+          class="pager pager-bottom"
+          :total="papers.length"
+          :pageSize="1"
+          :currentPage="page"
+          size="small"
+          @pageChange="showPage"
+        />
+      </section>
 
       <p class="foot">答案由 DeepSeek 生成，提交前请自行核对。</p>
     </div>
@@ -267,10 +291,10 @@ async function start() {
         <h2>怎么使用</h2>
         <ol>
           <li>点「登录账号」，在弹出的窗口登录正在做这份作业的智慧树账号。登录会保存，界面上能看到当前账号。要换人时再点「切换账号」。</li>
-          <li>在浏览器打开正在做的作业，复制地址栏整段地址，粘贴到「作业页地址」。普通作业页和 AI 教学中心的答题页都可以。</li>
-          <li>点「获取答案」。软件只读取题目并给出答案，不会交卷。</li>
-          <li>选择题会把正确选项标成绿色。填空题按网页上的空分成多行，每行有「复制」，粘贴进对应输入框。</li>
-          <li>答案同时写在程序旁边的「答案.txt」。提交前自己核对一遍。</li>
+          <li>在浏览器打开正在做的作业，复制地址栏整段地址。多份作业就每行粘贴一个地址。普通作业页和 AI 教学中心的答题页都可以。</li>
+          <li>点「获取答案」。多份作业会同时拉取、同时解答，只读取题目并给出答案，不会交卷。</li>
+          <li>一次只显示一份作业，用分页切换到下一份。选择题会把正确选项标成绿色。填空题按网页上的空分成多行，每行有「复制」。</li>
+          <li>每份答案单独保存在程序旁边的「答案」文件夹里，文件名是作业名称。点「复制本份」只复制这一份。提交前自己核对一遍。</li>
         </ol>
         <div class="help-close">
           <Button theme="solid" type="primary" @click="helpOpen = false">知道了</Button>

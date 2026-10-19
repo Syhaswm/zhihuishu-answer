@@ -9,7 +9,10 @@ import json
 import re
 import socket
 import sys
+import time
 from base64 import b64encode
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from datetime import datetime
 from html.parser import HTMLParser
 from pathlib import Path
@@ -45,6 +48,7 @@ AES_KEY = b"onbfhdyvz8x7otrp"
 AES_IV = b"1g3qqdh4jvbskb9x"
 API_BASE = "https://api.deepseek.com/chat/completions"
 MODEL = "deepseek-chat"
+PARALLEL = 4
 def _runtime_root():
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
@@ -549,6 +553,27 @@ def parse_model_json(text):
     raise RuntimeError("模型没有返回 JSON")
 
 
+@contextmanager
+def pinned_deepseek():
+    import urllib3.util.connection as urllib3_cn
+
+    ips = [ip for ip in deepseek_addresses() if ip]
+    ip = ips[0] if ips else None
+    original = urllib3_cn.create_connection
+
+    def create_connection(address, *args, **kwargs):
+        host, port = address
+        if ip and host == "api.deepseek.com":
+            address = (ip, port)
+        return original(address, *args, **kwargs)
+
+    urllib3_cn.create_connection = create_connection
+    try:
+        yield
+    finally:
+        urllib3_cn.create_connection = original
+
+
 def ask_chunk(api_key, questions):
     payload = {
         "model": MODEL,
@@ -565,24 +590,16 @@ def ask_chunk(api_key, questions):
         "Content-Type": "application/json",
     }
     resp = None
-    import urllib3.util.connection as urllib3_cn
-
-    original_connect = urllib3_cn.create_connection
-    for ip in deepseek_addresses():
-        def create_connection(address, *args, _ip=ip, **kwargs):
-            host, port = address
-            if _ip and host == "api.deepseek.com":
-                address = (_ip, port)
-            return original_connect(address, *args, **kwargs)
-
-        urllib3_cn.create_connection = create_connection
+    for attempt in range(2):
         try:
             resp = session().post(API_BASE, headers=headers, json=payload, timeout=(12, 120))
-            break
         except (requests.Timeout, requests.ConnectionError):
             resp = None
-        finally:
-            urllib3_cn.create_connection = original_connect
+            continue
+        if resp.status_code == 429 and attempt == 0:
+            time.sleep(1.2)
+            continue
+        break
     if resp is None:
         raise RuntimeError("连不上 DeepSeek。请检查网络后再点一次获取答案。")
     try:
@@ -675,20 +692,13 @@ def align_to_options(options, raw):
     return chosen or pieces
 
 
-def solve(exam, api_key=None, on_progress=None):
-    api_key = str(api_key or "").strip() or load_api_key()
-    questions = exam["questions"]
-    found = {}
-    size = 10
+def question_chunks(questions, size=10):
     for start in range(0, len(questions), size):
-        chunk = questions[start : start + size]
-        message = f"正在解答第 {chunk[0]['n']}-{chunk[-1]['n']} 题…"
-        print(message, flush=True)
-        if on_progress:
-            on_progress(message)
-        for item in ask_chunk(api_key, chunk):
-            found[item["n"]] = item
-    for question in questions:
+        yield questions[start : start + size]
+
+
+def apply_answers(exam, found):
+    for question in exam["questions"]:
         item = found.get(question["n"])
         question["modelAnswer"] = align_to_options(
             question.get("options") or [],
@@ -696,6 +706,48 @@ def solve(exam, api_key=None, on_progress=None):
         )
         question["reason"] = item["reason"] if item else ""
     return exam
+
+
+def collect_answers(api_key, jobs, on_progress=None):
+    found = {}
+    if not jobs:
+        return found
+    workers = min(PARALLEL, len(jobs))
+
+    def remember(chunk, items):
+        for item in items:
+            found.setdefault(item["n"], item)
+        if on_progress:
+            on_progress(f"已解答第 {chunk[0]['n']}-{chunk[-1]['n']} 题")
+
+    with pinned_deepseek():
+        if workers == 1:
+            chunk = jobs[0]
+            if on_progress:
+                on_progress(f"正在解答第 {chunk[0]['n']}-{chunk[-1]['n']} 题…")
+            remember(chunk, ask_chunk(api_key, chunk))
+            return found
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {}
+            for chunk in jobs:
+                if on_progress:
+                    on_progress(f"正在解答第 {chunk[0]['n']}-{chunk[-1]['n']} 题…")
+                futures[pool.submit(ask_chunk, api_key, chunk)] = chunk
+            for future in as_completed(futures):
+                remember(futures[future], future.result())
+    return found
+
+
+def solve(exam, api_key=None, on_progress=None):
+    api_key = str(api_key or "").strip() or load_api_key()
+    found = collect_answers(api_key, list(question_chunks(exam["questions"])), on_progress=on_progress)
+    return apply_answers(exam, found)
+
+
+def fetch_homework(url, cookie=None):
+    if is_polymas_url(url):
+        return fetch_polymas(url, cookie=cookie)
+    return fetch_exam(url, cookie=cookie)
 
 
 def render(exam):
@@ -719,15 +771,42 @@ def render(exam):
     return "\n".join(lines).rstrip() + "\n"
 
 
-def result_payload(exam):
+def split_homework_urls(text):
+    found = []
+    seen = set()
+    for piece in re.split(r"[\s,，;；]+", str(text or "").strip()):
+        piece = piece.strip()
+        if not piece or piece in seen:
+            continue
+        seen.add(piece)
+        found.append(piece)
+    return found
+
+
+def answer_filename(index, exam):
+    head = exam.get("title") or "作业"
+    if exam.get("course"):
+        head = f"{exam['course']} · {head}"
+    head = re.sub(r'[<>:"/\\|?*\r\n]', " ", head)
+    head = re.sub(r"\s+", " ", head).strip(" .")[:50] or "作业"
+    return f"{index:02d}-{head}.txt"
+
+
+def result_payload(exam, folder=None, index=1):
     text = render(exam)
-    out = ROOT / "答案.txt"
+    if folder:
+        out_dir = Path(folder)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out = out_dir / answer_filename(index, exam)
+    else:
+        out = ROOT / "答案.txt"
     out.write_text(text, encoding="utf-8")
     return {
         "course": exam["course"],
         "title": exam["title"],
         "text": text,
         "path": str(out),
+        "file": out.name,
         "questions": [
             {
                 "n": question["n"],
@@ -744,7 +823,7 @@ def result_payload(exam):
     }
 
 
-def run(url, cookie=None, api_key=None, on_progress=None):
+def run(url, cookie=None, api_key=None, on_progress=None, folder=None, index=1):
     if on_progress:
         on_progress("正在拉取题目…")
     if is_polymas_url(url):
@@ -756,7 +835,7 @@ def run(url, cookie=None, api_key=None, on_progress=None):
     if on_progress:
         on_progress(message)
     solve(exam, api_key=api_key, on_progress=on_progress)
-    return result_payload(exam)
+    return result_payload(exam, folder=folder, index=index)
 
 
 def main():

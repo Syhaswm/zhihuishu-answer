@@ -120,6 +120,50 @@ body {
   margin-bottom: 16px;
 }
 
+.paper {
+  margin-top: 18px;
+  scroll-margin-top: 12px;
+}
+
+.pager {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+
+.pager-bottom {
+  margin-top: 16px;
+  margin-bottom: 0;
+}
+
+.paper-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 2px 12px;
+}
+
+.paper-copy {
+  min-width: 0;
+}
+
+.paper-copy strong {
+  display: block;
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.paper-copy span,
+.paper-url {
+  display: block;
+  margin-top: 2px;
+  color: var(--semi-color-text-2, #6b7075);
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
 .summary {
   display: flex;
   align-items: baseline;
