@@ -7,11 +7,13 @@
 
 import json
 import re
+import socket
 import sys
 from base64 import b64encode
+from datetime import datetime
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import parse_qs, unquote, urlparse
 
 import requests
 from Crypto.Cipher import AES
@@ -70,6 +72,32 @@ def session():
     return client
 
 
+def _port_open(host, port, timeout=2):
+    sock = socket.socket()
+    sock.settimeout(timeout)
+    try:
+        sock.connect((host, port))
+        return True
+    except OSError:
+        return False
+    finally:
+        sock.close()
+
+
+def deepseek_addresses():
+    try:
+        infos = socket.getaddrinfo("api.deepseek.com", 443, socket.AF_INET, socket.SOCK_STREAM)
+    except socket.gaierror:
+        return [None]
+    ips = []
+    for info in infos:
+        ip = info[4][0]
+        if ip not in ips:
+            ips.append(ip)
+    reachable = [ip for ip in ips if _port_open(ip, 443)]
+    return reachable or ips or [None]
+
+
 def encrypt_params(payload):
     raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     pad = 16 - len(raw) % 16
@@ -85,8 +113,9 @@ def parse_homework_url(url):
     parts = [item for item in hashed.split("/") if item]
     if "dohomework" not in parts:
         raise ValueError(
-            "这不是作业做题页地址。请粘贴浏览器里打开作业后的完整地址，"
-            "路径里需要包含 /webExamList/dohomework/。"
+            "这不是作业做题页地址。请粘贴浏览器里打开作业后的完整地址。"
+            "普通作业页路径里有 /webExamList/dohomework/，"
+            "AI 教学中心作业页路径里有 /exam-hub/ 和 answer-homework。"
         )
     index = parts.index("dohomework")
     fields = parts[index + 1 :]
@@ -99,6 +128,198 @@ def parse_homework_url(url):
         "schoolId": fields[4],
         "courseId": fields[3],
     }
+
+
+POLY_ORIGIN = "https://hike-teaching-center.polymas.com"
+POLY_EXAM_API = "https://cloudapi.polymas.com/student-homework/homeworkStudentExam/queryExamInfo"
+POLY_DETAIL_API = "https://cloudapi.polymas.com/student-homework/homeworkStudent/getStudentHomeworkDetail"
+
+
+def is_polymas_url(url):
+    text = unquote(str(url or "")).strip().lower()
+    return "polymas.com" in text and "answer-homework" in text
+
+
+def parse_polymas_url(url):
+    text = unquote(url.strip())
+    parsed = urlparse(text)
+    parts = [item for item in parsed.path.split("/") if item]
+    query = parse_qs(parsed.query)
+    if parsed.fragment and "homeworkId" not in parsed.query:
+        fragment = parsed.fragment
+        if "?" in fragment:
+            fragment_path, fragment_query = fragment.split("?", 1)
+            query = parse_qs(fragment_query)
+            parts = [item for item in fragment_path.split("/") if item]
+    if "exam-hub" not in parts:
+        raise ValueError("这不是 AI 教学中心的作业做题页。请从浏览器地址栏整段复制。")
+    course_id = parts[parts.index("exam-hub") + 1] if len(parts) > parts.index("exam-hub") + 1 else ""
+    homework_id = (query.get("homeworkId") or [""])[0]
+    paper_id = (query.get("paperId") or [""])[0]
+    exam_id = (query.get("examId") or [""])[0]
+    if not all([course_id, homework_id, paper_id, exam_id]):
+        raise ValueError("地址里的作业参数不完整，请从浏览器地址栏整段复制。")
+    return {
+        "courseId": course_id,
+        "homeworkId": homework_id,
+        "paperId": paper_id,
+        "examId": exam_id,
+        "route": text.split("#")[0],
+    }
+
+
+def candidate_terms():
+    now = datetime.now()
+    year, month = now.year, now.month
+    if month >= 8:
+        ordered = [int(f"{year + 1}1"), int(f"{year}2"), int(f"{year}1")]
+    elif month <= 2:
+        ordered = [int(f"{year}1"), int(f"{year}2"), int(f"{year - 1}1")]
+    else:
+        ordered = [int(f"{year}2"), int(f"{year}1"), int(f"{year + 1}1")]
+    terms = []
+    for item in ordered:
+        if item not in terms:
+            terms.append(item)
+    return terms
+
+
+def polymas_identity(cookie_text):
+    jar = parse_cookie(cookie_text or "")
+    token = jar.get("polymas-token") or jar.get("ai-poly") or ""
+    raw = unquote(jar.get("AI-POLY-UINFO") or "")
+    student_id = ""
+    if raw:
+        try:
+            student_id = str(json.loads(raw).get("nid") or "")
+        except json.JSONDecodeError:
+            student_id = ""
+    return token, student_id
+
+
+def _polymas_headers(token, route):
+    headers = dict(HEADERS)
+    headers.update(
+        {
+            "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/json; charset=UTF-8",
+            "Origin": POLY_ORIGIN,
+            "Referer": POLY_ORIGIN + "/",
+            "authorization": token,
+            "route": route,
+        }
+    )
+    return headers
+
+
+def _polymas_options(quest):
+    options = []
+    blanks = []
+    for option in quest.get("optionList") or []:
+        text = strip_html(option.get("content"))
+        letter = str(option.get("orderNo") or "").strip()
+        if not text:
+            if letter:
+                blanks.append(letter if letter.startswith("【") else f"【{letter}】")
+            continue
+        if text in _JUDGEMENT:
+            options.append(text)
+            continue
+        if letter.isdigit():
+            options.append(format_choice(text, int(letter) - 1))
+            continue
+        if letter and not text.startswith(letter):
+            text = f"{letter}. {text}"
+        options.append(format_choice(text, len(options)))
+    return options, blanks
+
+
+def _walk_polymas(quests, group_title, out):
+    for quest in quests or []:
+        stem = strip_html(quest.get("content") or quest.get("questionName"))
+        options, blanks = _polymas_options(quest)
+        if stem or options or blanks:
+            out.append(
+                {
+                    "type": quest.get("questionTypeName") or group_title or "未知题型",
+                    "stem": stem,
+                    "options": options,
+                    "blankLabels": blanks,
+                    "score": quest.get("score") if quest.get("score") is not None else "",
+                }
+            )
+        _walk_polymas(quest.get("childList") or [], group_title, out)
+
+
+def parse_polymas_exam(payload, title):
+    paper = ((payload or {}).get("data") or {}).get("paperContent") or {}
+    questions = []
+    for group in paper.get("groupList") or []:
+        _walk_polymas(group.get("questList") or [], group.get("title") or "", questions)
+    if not questions:
+        raise RuntimeError("这份作业没有题目。")
+    for index, question in enumerate(questions, start=1):
+        question["n"] = index
+        question["blankLabels"] = infer_blank_labels(question)
+    return {
+        "course": "",
+        "title": title or "作业",
+        "total_score": paper.get("totalScore") or "",
+        "questions": questions,
+    }
+
+
+def fetch_polymas(url, cookie=None):
+    meta = parse_polymas_url(url)
+    token, student_id = polymas_identity(cookie if cookie is not None else COOKIE)
+    if not token or not student_id:
+        raise RuntimeError("还没有读到 AI 教学中心的登录。请点「切换账号」，在弹出的窗口重新登录后再获取答案。")
+    client = session()
+    headers = _polymas_headers(token, meta["route"])
+    last_message = ""
+    for term in candidate_terms():
+        body = {
+            "homeworkId": meta["homeworkId"],
+            "studentId": student_id,
+            "paperId": meta["paperId"],
+            "examId": meta["examId"],
+            "courseId": meta["courseId"],
+            "term": term,
+        }
+        response = client.post(POLY_EXAM_API, headers=headers, json=body, timeout=20)
+        if response.status_code in (401, 403):
+            raise RuntimeError("登录已失效。请点「切换账号」，在弹出的窗口重新登录后再获取答案。")
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise RuntimeError(f"拉题目失败：服务器返回的不是题目数据（HTTP {response.status_code}）。") from exc
+        if payload.get("code") != 200:
+            last_message = str(payload.get("msg") or payload.get("message") or payload.get("code") or "")
+            if "登录" in last_message or "token" in last_message.lower() or "未授权" in last_message:
+                raise RuntimeError("登录已失效。请点「切换账号」，在弹出的窗口重新登录后再获取答案。")
+            continue
+        paper = (payload.get("data") or {}).get("paperContent") or {}
+        if not paper.get("groupList"):
+            continue
+        title = _polymas_title(client, headers, meta, term)
+        return parse_polymas_exam(payload, title)
+    if last_message:
+        raise RuntimeError("拉题目失败：" + last_message)
+    raise RuntimeError("没有拉到这门课的题目。请确认地址是正在做的作业页，并且登录的是做这份作业的账号。")
+
+
+def _polymas_title(client, headers, meta, term):
+    try:
+        response = client.post(
+            POLY_DETAIL_API,
+            headers=headers,
+            json={"term": term, "courseId": meta["courseId"], "homeworkId": meta["homeworkId"]},
+            timeout=20,
+        )
+        data = response.json().get("data") or {}
+    except (ValueError, requests.RequestException):
+        return ""
+    return str(data.get("homeworkName") or data.get("title") or "")
 
 
 class _TextExtractor(HTMLParser):
@@ -124,12 +345,32 @@ def strip_html(raw):
     return text
 
 
+_CHOICE_LETTERS = "ABCDEFGH"
+_JUDGEMENT = {"对", "错", "正确", "错误", "是", "否", "√", "×"}
+
+
+def format_choice(text, index):
+    text = str(text or "").strip()
+    if not text:
+        return ""
+    match = re.match(r"^([A-Ha-h])\s*[\.、．:：]\s*(.*)$", text)
+    if match:
+        body = match.group(2).strip()
+        letter = match.group(1).upper()
+        return f"{letter}. {body}" if body else letter
+    if text in _JUDGEMENT:
+        return text
+    if 0 <= index < len(_CHOICE_LETTERS):
+        return f"{_CHOICE_LETTERS[index]}. {text}"
+    return text
+
+
 def normalize_question(question):
     raw_name = str(question.get("name") or "")
     qtype = question.get("questionType") or {}
     options = []
-    for opt in question.get("questionOptions") or []:
-        content = strip_html(opt.get("content"))
+    for index, opt in enumerate(question.get("questionOptions") or []):
+        content = format_choice(strip_html(opt.get("content")), index)
         if content:
             options.append(content)
     return {
@@ -162,6 +403,7 @@ def parse_exam(data):
         collect_questions(part.get("questionDtos"), questions)
     for index, question in enumerate(questions, start=1):
         question["n"] = index
+        question["blankLabels"] = infer_blank_labels(question)
     if not questions:
         return None
     return {
@@ -228,12 +470,51 @@ def load_api_key():
     return key
 
 
+def infer_blank_labels(question):
+    labels = [str(item).strip() for item in (question.get("blankLabels") or []) if str(item).strip()]
+    if labels:
+        return labels
+    stem = question.get("stem") or ""
+    marks = re.findall(r"_{2,}", stem)
+    if marks:
+        return [f"【{index}】" for index in range(1, len(marks) + 1)]
+    if "填空" in str(question.get("type") or ""):
+        return ["【1】"]
+    return []
+
+
+def split_blank_answers(texts, count):
+    if count <= 1:
+        return (texts[:1] or [""])
+    if len(texts) == count:
+        return texts
+    if len(texts) == 1:
+        for pattern in (r"[;；|｜]", r"[、,，]"):
+            pieces = [item.strip() for item in re.split(pattern, texts[0]) if item.strip()]
+            if len(pieces) == count:
+                return pieces
+    padded = list(texts) + [""] * count
+    return padded[:count]
+
+
+def answer_parts(question):
+    texts = answer_list(question.get("modelAnswer"))
+    labels = question.get("blankLabels") or []
+    if not labels:
+        return [{"label": "", "text": "、".join(texts)}]
+    texts = split_blank_answers(texts, len(labels))
+    return [{"label": label, "text": text} for label, text in zip(labels, texts)]
+
+
 def build_prompt(questions):
     blocks = []
     for question in questions:
         lines = [f"{question['n']}. [{question['type']}] {question['stem']}"]
+        labels = question.get("blankLabels") or []
         if question["options"]:
             lines.extend(f"- {opt}" for opt in question["options"])
+        elif labels:
+            lines.append(f"（共 {len(labels)} 个空，answer 按 {'、'.join(labels)} 的顺序各放一个字符串）")
         else:
             lines.append("（无选项，请直接作答）")
         blocks.append("\n".join(lines))
@@ -244,7 +525,7 @@ def build_prompt(questions):
             "规则：",
             "1. 选择题的 answer 必须逐字复制选项原文。单选只放 1 个，多选放全部正确项。",
             "2. 判断题 answer 使用选项原文；没有选项时用「对」或「错」。",
-            "3. 填空、简答把答案放进 answer 数组，只放一个字符串。",
+            "3. 填空题有几个空，answer 里就放几个字符串，按空的顺序一一对应，不要合并成一句。简答只放一个字符串。",
             "4. n 使用题目给出的题号。",
             "",
             "\n\n".join(blocks),
@@ -269,24 +550,41 @@ def parse_model_json(text):
 
 
 def ask_chunk(api_key, questions):
-    resp = session().post(
-        API_BASE,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": MODEL,
-            "temperature": 0.1,
-            "max_tokens": 2500,
-            "response_format": {"type": "json_object"},
-            "messages": [
-                {"role": "system", "content": "你只根据题目和选项作答，并且只输出 JSON。"},
-                {"role": "user", "content": build_prompt(questions)},
-            ],
-        },
-        timeout=120,
-    )
+    payload = {
+        "model": MODEL,
+        "temperature": 0.1,
+        "max_tokens": 2500,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": "你只根据题目和选项作答，并且只输出 JSON。"},
+            {"role": "user", "content": build_prompt(questions)},
+        ],
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    resp = None
+    import urllib3.util.connection as urllib3_cn
+
+    original_connect = urllib3_cn.create_connection
+    for ip in deepseek_addresses():
+        def create_connection(address, *args, _ip=ip, **kwargs):
+            host, port = address
+            if _ip and host == "api.deepseek.com":
+                address = (_ip, port)
+            return original_connect(address, *args, **kwargs)
+
+        urllib3_cn.create_connection = create_connection
+        try:
+            resp = session().post(API_BASE, headers=headers, json=payload, timeout=(12, 120))
+            break
+        except (requests.Timeout, requests.ConnectionError):
+            resp = None
+        finally:
+            urllib3_cn.create_connection = original_connect
+    if resp is None:
+        raise RuntimeError("连不上 DeepSeek。请检查网络后再点一次获取答案。")
     try:
         data = resp.json()
     except ValueError:
@@ -323,6 +621,60 @@ def answer_list(raw):
     return pieces or [text]
 
 
+def _compact(text):
+    return re.sub(r"\s+", "", str(text or "")).casefold()
+
+
+def _option_letter(option):
+    match = re.match(r"^\s*([A-Ha-h])\s*[\.、．:：]", str(option))
+    return match.group(1).upper() if match else ""
+
+
+def _option_body(option):
+    return re.sub(r"^\s*[A-Ha-h]\s*[\.、．:：]\s*", "", str(option)).strip()
+
+
+def align_to_options(options, raw):
+    pieces = answer_list(raw)
+    if not options or not pieces:
+        return pieces
+    chosen = []
+
+    def add(option):
+        if option not in chosen:
+            chosen.append(option)
+
+    for piece in pieces:
+        compact = _compact(piece)
+        stripped = piece.strip()
+        if re.fullmatch(r"[A-Ha-h]", stripped):
+            for option in options:
+                if _option_letter(option) == stripped.upper():
+                    add(option)
+            continue
+        if re.fullmatch(r"[A-Ha-h]{2,8}", stripped):
+            for char in stripped.upper():
+                for option in options:
+                    if _option_letter(option) == char:
+                        add(option)
+            continue
+        exact = []
+        fuzzy = []
+        for option in options:
+            body = _compact(_option_body(option))
+            full = _compact(option)
+            if compact and (compact == full or compact == body):
+                exact = [option]
+                break
+            if len(compact) >= 4 and body and (compact in body or body in compact):
+                fuzzy.append(option)
+        if exact:
+            add(exact[0])
+        elif len(fuzzy) == 1:
+            add(fuzzy[0])
+    return chosen or pieces
+
+
 def solve(exam, api_key=None, on_progress=None):
     api_key = str(api_key or "").strip() or load_api_key()
     questions = exam["questions"]
@@ -338,7 +690,10 @@ def solve(exam, api_key=None, on_progress=None):
             found[item["n"]] = item
     for question in questions:
         item = found.get(question["n"])
-        question["modelAnswer"] = item["answer"] if item else []
+        question["modelAnswer"] = align_to_options(
+            question.get("options") or [],
+            item["answer"] if item else [],
+        )
         question["reason"] = item["reason"] if item else ""
     return exam
 
@@ -351,8 +706,12 @@ def render(exam):
     for question in exam["questions"]:
         score = f" · {question['score']}分" if question["score"] != "" else ""
         lines.append(f"{question['n']}. [{question['type']}{score}] {question['stem']}")
-        answers = answer_list(question.get("modelAnswer"))
-        lines.append("答案：" + ("、".join(answers) if answers else "（无）"))
+        parts = answer_parts(question)
+        if question.get("blankLabels"):
+            for part in parts:
+                lines.append(f"{part['label']} {part['text'] or '（无）'}")
+        else:
+            lines.append("答案：" + (parts[0]["text"] if parts and parts[0]["text"] else "（无）"))
         if question.get("reason"):
             lines.append("理由：" + str(question["reason"]))
         lines.append("")
@@ -376,7 +735,8 @@ def result_payload(exam):
                 "score": str(question["score"]),
                 "stem": question["stem"],
                 "options": question["options"],
-                "answer": "、".join(answer_list(question.get("modelAnswer"))),
+                "answer": "、".join(part["text"] for part in answer_parts(question) if part["text"]),
+                "parts": answer_parts(question),
                 "reason": question.get("reason") or "",
             }
             for question in exam["questions"]
@@ -387,7 +747,10 @@ def result_payload(exam):
 def run(url, cookie=None, api_key=None, on_progress=None):
     if on_progress:
         on_progress("正在拉取题目…")
-    exam = fetch_exam(url, cookie=cookie)
+    if is_polymas_url(url):
+        exam = fetch_polymas(url, cookie=cookie)
+    else:
+        exam = fetch_exam(url, cookie=cookie)
     message = f"共 {len(exam['questions'])} 题"
     print(message, flush=True)
     if on_progress:

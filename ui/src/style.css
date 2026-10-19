@@ -37,6 +37,11 @@ body {
   object-fit: cover;
 }
 
+.brand-copy {
+  flex: 1;
+  min-width: 0;
+}
+
 .brand h1 {
   margin: 0;
   font-size: 22px;
@@ -48,6 +53,34 @@ body {
   margin: 2px 0 0;
   color: var(--semi-color-text-2, #6b7075);
   font-size: 13px;
+}
+
+.help h2 {
+  margin: 18px 0 8px;
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+.help h2:first-child {
+  margin-top: 0;
+}
+
+.help ol {
+  margin: 0 0 12px;
+  padding-left: 18px;
+}
+
+.help li {
+  margin-bottom: 6px;
+  line-height: 1.7;
+  font-size: 13px;
+  color: var(--semi-color-text-0, #1c1f23);
+}
+
+.help-close {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
 }
 
 .form-card {
@@ -127,17 +160,18 @@ body {
 
 .options {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 6px;
   margin-top: 10px;
 }
 
 .option {
-  padding: 3px 8px;
-  border-radius: 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
   background: var(--semi-color-fill-0, #f0f1f3);
   color: var(--semi-color-text-1, #3a3f45);
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .option.is-hit {
@@ -146,13 +180,29 @@ body {
   font-weight: 650;
 }
 
+.option-mark {
+  margin-right: 6px;
+  font-size: 12px;
+}
+
 .answer {
-  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
   padding: 8px 12px;
   border-radius: 8px;
   background: var(--semi-color-primary-light-default, #eaf2ff);
   color: var(--semi-color-primary, #0064fa);
   font-weight: 650;
+}
+
+.answer-text {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.5;
+  word-break: break-all;
 }
 
 .reason {

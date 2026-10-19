@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
-import { BackTop, Banner, Button, Card, Input, Tag, Toast } from "@kousum/semi-ui-vue";
+import { BackTop, Banner, Button, Card, Input, Modal, Tag, Toast } from "@kousum/semi-ui-vue";
 
 const url = ref("");
 const apiKey = ref("");
@@ -14,6 +14,8 @@ const course = ref("");
 const title = ref("");
 const questions = ref([]);
 const text = ref("");
+const helpOpen = ref(false);
+const keyPage = "https://platform.deepseek.com/api_keys";
 
 const heading = computed(() => {
   if (!title.value) return "";
@@ -40,6 +42,9 @@ async function loadSettings() {
   const data = await window.pywebview.api.load_settings();
   apiKey.value = data.apiKey || "";
   accountName.value = data.name || "";
+  if (data.expired) {
+    status.value = "登录已过期。请点「切换账号」重新登录。";
+  }
 }
 
 async function login() {
@@ -57,7 +62,15 @@ async function login() {
     status.value = "已保存登录：" + accountName.value + "。现在可以获取答案。";
     Toast.success("登录已保存");
   } catch (err) {
-    error.value = err.message || String(err);
+    const message = err.message || String(err);
+    error.value = message;
+    status.value = message;
+    try {
+      const data = await window.pywebview.api.load_settings();
+      accountName.value = data.name || "";
+    } catch (ignore) {
+      /* 账号显示保持原样 */
+    }
   } finally {
     loggingIn.value = false;
   }
@@ -73,6 +86,35 @@ onMounted(() => {
   }
   window.addEventListener("pywebviewready", loadSettings, { once: true });
 });
+
+function displayParts(question) {
+  if (Array.isArray(question.parts) && question.parts.length) {
+    return question.parts;
+  }
+  return [{ label: "", text: question.answer || "" }];
+}
+
+async function copyText(value) {
+  const text = String(value || "").trim();
+  if (!text) {
+    Toast.warning("这一空没有答案");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    Toast.success("已复制");
+  } catch (err) {
+    error.value = "复制失败，请手动选择这段答案";
+  }
+}
+
+async function openKeyPage() {
+  if (typeof window.pywebview?.api?.open_url === "function") {
+    await window.pywebview.api.open_url(keyPage);
+    return;
+  }
+  window.open(keyPage, "_blank");
+}
 
 async function copyAnswers() {
   if (!text.value) return;
@@ -117,10 +159,11 @@ async function start() {
     <div class="shell">
       <header class="brand">
         <img class="logo" src="/icon.png" alt="" />
-        <div>
+        <div class="brand-copy">
           <h1>智慧树答题</h1>
           <p>输入作业地址，返回答案。用谁的账号登录，就查谁的作业。</p>
         </div>
+        <Button @click="helpOpen = true">帮助</Button>
       </header>
 
       <Card class="form-card" :bodyStyle="{ padding: '18px 18px 14px' }">
@@ -128,7 +171,7 @@ async function start() {
           <div class="field-label">作业页地址</div>
           <Input
             :value="url"
-            placeholder="https://onlineexamh5new.zhihuishu.com/stuExamWeb.html#/webExamList/dohomework/..."
+            placeholder="粘贴作业做题页地址，支持普通作业页和 AI 教学中心答题页"
             @change="(value) => (url = value)"
           />
         </div>
@@ -172,22 +215,68 @@ async function start() {
           </div>
           <div class="stem">{{ question.stem }}</div>
           <div v-if="question.options.length" class="options">
-            <span
+            <div
               v-for="option in question.options"
               :key="option"
               class="option"
               :class="{ 'is-hit': isHit(question, option) }"
             >
+              <span v-if="isHit(question, option)" class="option-mark">正确</span>
               {{ option }}
-            </span>
+            </div>
           </div>
-          <div class="answer">答案：{{ question.answer || "（无）" }}</div>
+          <div v-for="(part, index) in displayParts(question)" :key="index" class="answer">
+            <span class="answer-text">
+              <template v-if="part.label">{{ part.label }} </template>
+              <template v-else>答案：</template>
+              {{ part.text || "（无）" }}
+            </span>
+            <Button
+              v-if="!question.options.length"
+              size="small"
+              theme="solid"
+              type="primary"
+              :disabled="!part.text"
+              @click="copyText(part.text)"
+            >
+              复制
+            </Button>
+          </div>
           <div v-if="question.reason" class="reason">{{ question.reason }}</div>
         </Card>
       </div>
 
       <p class="foot">答案由 DeepSeek 生成，提交前请自行核对。</p>
     </div>
+    <Modal :visible="helpOpen" title="帮助" :width="640" :footer="null" @cancel="helpOpen = false">
+      <div class="help">
+        <h2>获取 DeepSeek API Key</h2>
+        <ol>
+          <li>打开 DeepSeek 开放平台并登录。没有账号就先注册。</li>
+          <li>进入「API keys」页面，点「创建 API key」，填一个名字后创建。</li>
+          <li>创建成功后马上复制。Key 以 sk- 开头，关掉窗口后就看不到完整内容了。</li>
+          <li>账户里需要有余额。余额用完后，接口会拒绝答题，到开放平台充值后再用。</li>
+        </ol>
+        <Button size="small" theme="solid" type="primary" @click="openKeyPage">打开 API keys 页面</Button>
+        <h2>把 Key 填进软件</h2>
+        <ol>
+          <li>回到本软件，把复制的 Key 粘贴到「DeepSeek API Key」。</li>
+          <li>点一次「获取答案」。软件会记住这把 Key，下次打开不用再填。</li>
+          <li>要换 Key 时，把输入框里的内容改掉，再点一次「获取答案」。</li>
+        </ol>
+        <h2>怎么使用</h2>
+        <ol>
+          <li>点「登录账号」，在弹出的窗口登录正在做这份作业的智慧树账号。登录会保存，界面上能看到当前账号。要换人时再点「切换账号」。</li>
+          <li>在浏览器打开正在做的作业，复制地址栏整段地址，粘贴到「作业页地址」。普通作业页和 AI 教学中心的答题页都可以。</li>
+          <li>点「获取答案」。软件只读取题目并给出答案，不会交卷。</li>
+          <li>选择题会把正确选项标成绿色。填空题按网页上的空分成多行，每行有「复制」，粘贴进对应输入框。</li>
+          <li>答案同时写在程序旁边的「答案.txt」。提交前自己核对一遍。</li>
+        </ol>
+        <div class="help-close">
+          <Button theme="solid" type="primary" @click="helpOpen = false">知道了</Button>
+        </div>
+      </div>
+    </Modal>
     <BackTop className="to-top" :visibilityHeight="160" :target="scrollTarget">
       <span class="to-top-label">顶部</span>
     </BackTop>
