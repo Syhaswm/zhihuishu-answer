@@ -1,6 +1,6 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
-import { BackTop, Banner, Button, Card, Input, Modal, Pagination, Tag, TextArea, Toast } from "@kousum/semi-ui-vue";
+import { BackTop, Banner, Button, Card, Checkbox, Input, Modal, Pagination, Switch, Tag, TextArea, Toast } from "@kousum/semi-ui-vue";
 
 const url = ref("");
 const apiKey = ref("");
@@ -11,12 +11,20 @@ const accountName = ref("");
 const status = ref("先点登录账号，在弹出的窗口登录。之后获取答案会一直用这个账号。");
 const error = ref("");
 const papers = ref([]);
+const saveAnswers = ref(true);
+const answerFiles = ref([]);
+const showAllFiles = ref(false);
+const selectedFiles = ref([]);
+const confirmAll = ref(false);
 const page = ref(1);
 const paperAnchor = ref(null);
 const helpOpen = ref(false);
 const keyPage = "https://platform.deepseek.com/api_keys";
 
 const currentPaper = computed(() => papers.value[page.value - 1] || null);
+const visibleFiles = computed(() =>
+  showAllFiles.value ? answerFiles.value : answerFiles.value.slice(0, 3)
+);
 
 function showPage(next) {
   const total = papers.value.length;
@@ -45,6 +53,8 @@ async function loadSettings() {
   const data = await window.pywebview.api.load_settings();
   apiKey.value = data.apiKey || "";
   accountName.value = data.name || "";
+  saveAnswers.value = data.saveAnswers !== false;
+  answerFiles.value = data.files || [];
   if (data.expired) {
     status.value = "登录已过期。请点「切换账号」重新登录。";
   }
@@ -119,6 +129,66 @@ async function openKeyPage() {
   window.open(keyPage, "_blank");
 }
 
+function isChecked(event) {
+  if (typeof event === "boolean") return event;
+  return !!(event && event.target && event.target.checked);
+}
+
+function toggleFile(name, event) {
+  const checked = isChecked(event);
+  if (checked) {
+    if (!selectedFiles.value.includes(name)) {
+      selectedFiles.value = [...selectedFiles.value, name];
+    }
+    return;
+  }
+  selectedFiles.value = selectedFiles.value.filter((item) => item !== name);
+}
+
+async function changeSave(event) {
+  const enabled = isChecked(event);
+  saveAnswers.value = enabled;
+  confirmAll.value = false;
+  if (typeof window.pywebview?.api?.set_save_answers !== "function") return;
+  const data = await window.pywebview.api.set_save_answers(enabled);
+  saveAnswers.value = data.saveAnswers !== false;
+  answerFiles.value = data.files || [];
+  Toast.success(saveAnswers.value ? "之后会写入答案文件夹" : "之后不再写入答案文件");
+}
+
+async function refreshFiles() {
+  if (typeof window.pywebview?.api?.list_answers !== "function") return;
+  const data = await window.pywebview.api.list_answers();
+  answerFiles.value = data.files || [];
+  selectedFiles.value = selectedFiles.value.filter((name) =>
+    answerFiles.value.some((file) => file.name === name)
+  );
+}
+
+async function removeSelected() {
+  if (!selectedFiles.value.length) {
+    Toast.warning("先勾选要删除的文件");
+    return;
+  }
+  const data = await window.pywebview.api.delete_answers([...selectedFiles.value]);
+  answerFiles.value = data.files || [];
+  selectedFiles.value = [];
+  confirmAll.value = false;
+  Toast.success("已删除选中的答案文件");
+}
+
+async function removeAll() {
+  if (!confirmAll.value) {
+    confirmAll.value = true;
+    return;
+  }
+  const data = await window.pywebview.api.delete_all_answers();
+  answerFiles.value = data.files || [];
+  selectedFiles.value = [];
+  confirmAll.value = false;
+  Toast.success("已删除答案文件夹");
+}
+
 function paperTitle(paper) {
   if (!paper.ok) return paper.title || "这份作业没有取到";
   return paper.course ? `${paper.course} · ${paper.title}` : paper.title || "作业";
@@ -143,6 +213,7 @@ async function start() {
     papers.value = resp.papers || [];
     page.value = 1;
     status.value = resp.summary || "";
+    await refreshFiles();
     if (!resp.ok && !papers.value.length) {
       error.value = resp.error || "没有返回结果";
     }
@@ -161,7 +232,7 @@ async function start() {
         <img class="logo" src="/icon.png" alt="" />
         <div class="brand-copy">
           <h1>智慧树答题</h1>
-          <p>多份作业一次只显示一份，用分页切换。每份答案分开保存。</p>
+          <p>多份作业一次只显示一份，用分页切换。是否保存答案文件可以自己选。</p>
         </div>
         <Button @click="helpOpen = true">帮助</Button>
       </header>
@@ -195,6 +266,38 @@ async function start() {
         <div class="status">{{ status }}</div>
       </Card>
 
+      <Card class="form-card" :bodyStyle="{ padding: '18px 18px 14px' }">
+        <div class="save-row">
+          <div>
+            <div class="field-label">保存到答案文件夹</div>
+            <div class="save-hint">
+              {{ saveAnswers ? "获取答案后，每份作业写成一个 txt。" : "关闭后只在窗口里显示，不写文件。" }}
+            </div>
+          </div>
+          <Switch :checked="saveAnswers" @change="changeSave" />
+        </div>
+        <div v-if="answerFiles.length" class="file-list">
+          <Checkbox
+            v-for="file in visibleFiles"
+            :key="file.name"
+            :checked="selectedFiles.includes(file.name)"
+            @change="(event) => toggleFile(file.name, event)"
+          >
+            {{ file.name }}
+          </Checkbox>
+          <Button v-if="answerFiles.length > 3" theme="borderless" type="primary" @click="showAllFiles = !showAllFiles">
+            {{ showAllFiles ? "收起" : `显示全部（${answerFiles.length}）` }}
+          </Button>
+        </div>
+        <div v-else class="save-hint">答案文件夹里还没有文件。</div>
+        <div class="actions file-actions">
+          <Button :disabled="!selectedFiles.length" @click="removeSelected">删除选中</Button>
+          <Button type="danger" :disabled="!answerFiles.length" @click="removeAll">
+            {{ confirmAll ? "确定删除全部" : "删除全部答案" }}
+          </Button>
+        </div>
+      </Card>
+
       <Banner v-if="error" class="alert" type="danger" :description="error" />
 
       <section v-if="currentPaper" ref="paperAnchor" class="paper">
@@ -210,7 +313,7 @@ async function start() {
         <div class="paper-head">
           <div class="paper-copy">
             <strong>{{ paperTitle(currentPaper) }}</strong>
-            <span v-if="currentPaper.ok">第 {{ page }} / {{ papers.length }} 份 · {{ currentPaper.questions.length }} 题 · 答案/{{ currentPaper.file }}</span>
+            <span v-if="currentPaper.ok">第 {{ page }} / {{ papers.length }} 份 · {{ currentPaper.questions.length }} 题<span v-if="currentPaper.file"> · 答案/{{ currentPaper.file }}</span></span>
             <span v-else class="paper-url">第 {{ page }} / {{ papers.length }} 份 · {{ currentPaper.url }}</span>
           </div>
           <Button v-if="currentPaper.ok" size="small" @click="copyText(currentPaper.text)">复制本份</Button>
@@ -294,7 +397,7 @@ async function start() {
           <li>在浏览器打开正在做的作业，复制地址栏整段地址。多份作业就每行粘贴一个地址。普通作业页和 AI 教学中心的答题页都可以。</li>
           <li>点「获取答案」。多份作业会同时拉取、同时解答，只读取题目并给出答案，不会交卷。</li>
           <li>一次只显示一份作业，用分页切换到下一份。选择题会把正确选项标成绿色。填空题按网页上的空分成多行，每行有「复制」。</li>
-          <li>每份答案单独保存在程序旁边的「答案」文件夹里，文件名是作业名称。点「复制本份」只复制这一份。提交前自己核对一遍。</li>
+          <li>打开「保存到答案文件夹」后，每份答案写成一个 txt。关掉后只在窗口里显示，不写文件。已有文件可以勾选删除，或点「删除全部答案」清掉整个文件夹。点「复制本份」只复制这一份。提交前自己核对一遍。</li>
         </ol>
         <div class="help-close">
           <Button theme="solid" type="primary" @click="helpOpen = false">知道了</Button>

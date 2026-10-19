@@ -109,6 +109,31 @@ body {
   gap: 10px;
 }
 
+.save-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.save-hint {
+  color: var(--semi-color-text-2, #6b7075);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.file-list {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.file-actions {
+  margin-top: 14px;
+}
+
 .status {
   margin-top: 10px;
   color: var(--semi-color-text-2, #6b7075);

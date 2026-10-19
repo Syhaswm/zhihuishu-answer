@@ -792,21 +792,23 @@ def answer_filename(index, exam):
     return f"{index:02d}-{head}.txt"
 
 
-def result_payload(exam, folder=None, index=1):
+def result_payload(exam, folder=None, index=1, save=True):
     text = render(exam)
-    if folder:
-        out_dir = Path(folder)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        out = out_dir / answer_filename(index, exam)
-    else:
-        out = ROOT / "答案.txt"
-    out.write_text(text, encoding="utf-8")
+    out = None
+    if save:
+        if folder:
+            out_dir = Path(folder)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            out = out_dir / answer_filename(index, exam)
+        else:
+            out = ROOT / "答案.txt"
+        out.write_text(text, encoding="utf-8")
     return {
         "course": exam["course"],
         "title": exam["title"],
         "text": text,
-        "path": str(out),
-        "file": out.name,
+        "path": str(out) if out else "",
+        "file": out.name if out else "",
         "questions": [
             {
                 "n": question["n"],

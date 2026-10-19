@@ -4,6 +4,7 @@ import base64
 import ctypes
 import functools
 import json
+import shutil
 import sys
 import threading
 import time
@@ -116,7 +117,80 @@ class Api:
         cookie = self._saved_cookie()
         expired = _has_auth(cookie) and _token_expired(cookie)
         name = "" if expired else _account_name(cookie)
-        return {"apiKey": api_key, "name": name, "expired": expired}
+        return {
+            "apiKey": api_key,
+            "name": name,
+            "expired": expired,
+            "saveAnswers": self._save_answers(),
+            "files": self._answer_files(),
+        }
+
+    def set_save_answers(self, enabled):
+        self._write_pref(bool(enabled))
+        return {"ok": True, "saveAnswers": self._save_answers(), "files": self._answer_files()}
+
+    def list_answers(self):
+        return {"files": self._answer_files()}
+
+    def delete_answers(self, names):
+        if isinstance(names, str):
+            names = [names]
+        folder = self._answer_dir().resolve()
+        removed = []
+        for name in names or []:
+            path = self._answer_file(name, folder)
+            if path is None:
+                continue
+            path.unlink()
+            removed.append(path.name)
+        return {"ok": True, "removed": removed, "files": self._answer_files()}
+
+    def delete_all_answers(self):
+        folder = self._answer_dir()
+        if folder.exists():
+            shutil.rmtree(folder)
+        return {"ok": True, "files": []}
+
+    def _pref_path(self):
+        return answer.ROOT / "settings.json"
+
+    def _save_answers(self):
+        path = self._pref_path()
+        if not path.exists():
+            return True
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return True
+        return bool(data.get("saveAnswers", True))
+
+    def _write_pref(self, enabled):
+        self._pref_path().write_text(
+            json.dumps({"saveAnswers": bool(enabled)}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    def _answer_dir(self):
+        return answer.ROOT / "答案"
+
+    def _answer_file(self, name, folder):
+        text = str(name or "").strip()
+        if not text or text != Path(text).name or not text.lower().endswith(".txt"):
+            return None
+        path = (folder / text).resolve()
+        if path.parent != folder or not path.is_file():
+            return None
+        return path
+
+    def _answer_files(self):
+        folder = self._answer_dir()
+        if not folder.is_dir():
+            return []
+        files = []
+        for path in sorted(folder.glob("*.txt")):
+            if path.is_file():
+                files.append({"name": path.name, "size": path.stat().st_size})
+        return files
 
     def account(self):
         cookie = self._saved_cookie()
@@ -400,7 +474,8 @@ class Api:
             api_key, cookie = self._prepare_solve(api_key)
         except Exception as exc:
             return {"ok": False, "error": str(exc), "papers": []}
-        folder = answer.ROOT / "答案"
+        save_files = self._save_answers()
+        folder = answer.ROOT / "答案" if save_files else None
         total = len(urls)
         for url in urls:
             if answer.is_polymas_url(url):
@@ -451,18 +526,20 @@ class Api:
                 papers.append(self._failed_paper(index, url, chunk_errors[index]))
                 continue
             answer.apply_answers(exam, found[index])
-            result = answer.result_payload(exam, folder=folder, index=index + 1)
+            result = answer.result_payload(exam, folder=folder, index=index + 1, save=save_files)
             result["ok"] = True
             result["url"] = url
             papers.append(result)
         done = sum(1 for paper in papers if paper.get("ok"))
         failed = total - done
-        if done and failed:
-            summary = f"完成 {done} 份，{failed} 份没有取到。成功的答案分别保存在「答案」文件夹。"
-        elif done:
-            summary = f"完成 {done} 份。每份答案单独保存在「答案」文件夹。"
-        else:
+        if not done:
             summary = "这几份作业都没有取到答案。"
+        elif not save_files:
+            summary = f"完成 {done} 份。" + (f"{failed} 份没有取到。" if failed else "") + "这次没有写入答案文件夹。"
+        elif failed:
+            summary = f"完成 {done} 份，{failed} 份没有取到。成功的答案分别保存在「答案」文件夹。"
+        else:
+            summary = f"完成 {done} 份。每份答案单独保存在「答案」文件夹。"
         self._progress(summary)
         return {"ok": done > 0, "error": "" if done else summary, "papers": papers, "summary": summary}
 
