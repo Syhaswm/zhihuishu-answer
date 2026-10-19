@@ -1,7 +1,48 @@
 const API = "http://127.0.0.1:8765";
+let appToken = "";
+
+async function getToken() {
+  if (appToken) return appToken;
+  if (window.__ZHS_TOKEN__) {
+    appToken = window.__ZHS_TOKEN__;
+    return appToken;
+  }
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    appToken = await invoke("api_token");
+  } catch (err) {
+    appToken = "";
+  }
+  return appToken;
+}
+
+async function signedHeaders(method, path, body, extra) {
+  const token = await getToken();
+  if (!token) throw new Error("软件口令还没准备好，请重新打开软件。");
+  const timestamp = Date.now().toString();
+  const payload = `${timestamp}\n${method.toUpperCase()}\n${path}\n${body || ""}`;
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(token),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload));
+  const sign = [...new Uint8Array(mac)].map((item) => item.toString(16).padStart(2, "0")).join("");
+  return {
+    ...(extra || {}),
+    "X-Zhs-Timestamp": timestamp,
+    "X-Zhs-Sign": sign,
+  };
+}
 
 async function request(path, options) {
-  const response = await fetch(API + path, options);
+  const next = { ...(options || {}) };
+  const method = next.method || "GET";
+  const body = typeof next.body === "string" ? next.body : "";
+  next.headers = await signedHeaders(method, path, body, next.headers);
+  const response = await fetch(API + path, next);
   const data = await response.json().catch(() => ({}));
   if (!response.ok && data.error) {
     throw new Error(data.error);
@@ -58,10 +99,13 @@ export function loginStatus() {
 }
 
 export async function solveBatch(urls, apiKey, onProgress) {
+  const body = JSON.stringify({ urls, apiKey });
   const response = await fetch(API + "/api/solve", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ urls, apiKey }),
+    headers: await signedHeaders("POST", "/api/solve", body, {
+      "Content-Type": "application/json",
+    }),
+    body,
   });
   if (!response.ok || !response.body) {
     throw new Error("获取答案失败");

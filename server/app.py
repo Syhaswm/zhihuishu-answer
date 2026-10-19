@@ -1,15 +1,19 @@
-"""本机 FastAPI。只监听 127.0.0.1，供 Tauri 窗口调用。"""
+"""本机 FastAPI。只监听 127.0.0.1，并且每次启动都要核对随机口令。"""
 
+import hashlib
+import hmac
 import json
+import os
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from queue import Empty, Queue
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -19,13 +23,46 @@ if str(ROOT) not in sys.path:
 import answer
 import desktop
 
-app = FastAPI(title="智慧树答题")
+app = FastAPI(title="智慧树答题", docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[
+        "http://127.0.0.1:1420",
+        "http://localhost:1420",
+        "http://tauri.localhost",
+        "https://tauri.localhost",
+        "tauri://localhost",
+    ],
+    allow_methods=["GET", "POST"],
+    allow_headers=["content-type", "x-zhs-timestamp", "x-zhs-sign"],
 )
+
+API_TOKEN = os.environ.get("ZHS_API_TOKEN", "")
+SIGN_WINDOW_MS = 120_000
+
+
+def _sign(timestamp, method, path, body):
+    payload = f"{timestamp}\n{method}\n{path}\n{body}".encode()
+    return hmac.new(API_TOKEN.encode(), payload, hashlib.sha256).hexdigest()
+
+
+@app.middleware("http")
+async def require_sign(request: Request, call_next):
+    if not API_TOKEN:
+        return JSONResponse({"error": "无权访问"}, status_code=401)
+    timestamp = request.headers.get("x-zhs-timestamp") or ""
+    sign = request.headers.get("x-zhs-sign") or ""
+    try:
+        stamp = int(timestamp)
+    except ValueError:
+        return JSONResponse({"error": "无权访问"}, status_code=401)
+    if abs(int(time.time() * 1000) - stamp) > SIGN_WINDOW_MS:
+        return JSONResponse({"error": "请求已过期"}, status_code=401)
+    body = (await request.body()).decode("utf-8")
+    expected = _sign(timestamp, request.method.upper(), request.url.path, body)
+    if not hmac.compare_digest(expected, sign):
+        return JSONResponse({"error": "无权访问"}, status_code=401)
+    return await call_next(request)
 
 api = desktop.Api()
 _login_proc = None
