@@ -15,6 +15,7 @@ login_result.json
 sync_request.json
 sync_result.json
 api.log
+dev-python.txt
 src-tauri/target
 src-tauri/gen
 node_modules

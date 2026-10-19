@@ -31,11 +31,27 @@ fn bundled_root() -> Option<PathBuf> {
     }
 }
 
+fn dev_root() -> Option<PathBuf> {
+    let mut dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+    for _ in 0..6 {
+        if dir.join("server").join("app.py").is_file() {
+            return Some(dir);
+        }
+        if !dir.pop() {
+            break;
+        }
+    }
+    None
+}
+
 fn app_root() -> PathBuf {
     if let Some(root) = bundled_root() {
         return root;
     }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
+    if let Some(root) = dev_root() {
+        return root;
+    }
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
 fn python_executable(root: &std::path::Path) -> PathBuf {
@@ -43,9 +59,11 @@ fn python_executable(root: &std::path::Path) -> PathBuf {
     if bundled.is_file() {
         return bundled;
     }
-    let configured = PathBuf::from(r"D:\anaconda_conda\envs\full-stack\python.exe");
-    if configured.is_file() {
-        return configured;
+    if let Ok(text) = std::fs::read_to_string(root.join("dev-python.txt")) {
+        let configured = PathBuf::from(text.trim());
+        if configured.is_file() {
+            return configured;
+        }
     }
     PathBuf::from("python")
 }
