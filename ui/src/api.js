@@ -42,7 +42,12 @@ async function request(path, options) {
   const method = next.method || "GET";
   const body = typeof next.body === "string" ? next.body : "";
   next.headers = await signedHeaders(method, path, body, next.headers);
-  const response = await fetch(API + path, next);
+  let response;
+  try {
+    response = await fetch(API + path, next);
+  } catch (err) {
+    throw new Error("连不上本机答题服务。请关掉软件后重新打开。");
+  }
   const data = await response.json().catch(() => ({}));
   if (!response.ok && data.error) {
     throw new Error(data.error);
@@ -100,13 +105,18 @@ export function loginStatus() {
 
 export async function solveBatch(urls, apiKey, onProgress) {
   const body = JSON.stringify({ urls, apiKey });
-  const response = await fetch(API + "/api/solve", {
-    method: "POST",
-    headers: await signedHeaders("POST", "/api/solve", body, {
-      "Content-Type": "application/json",
-    }),
-    body,
-  });
+  let response;
+  try {
+    response = await fetch(API + "/api/solve", {
+      method: "POST",
+      headers: await signedHeaders("POST", "/api/solve", body, {
+        "Content-Type": "application/json",
+      }),
+      body,
+    });
+  } catch (err) {
+    throw new Error("连不上本机答题服务。请关掉软件后重新打开。");
+  }
   if (!response.ok || !response.body) {
     throw new Error("获取答案失败");
   }

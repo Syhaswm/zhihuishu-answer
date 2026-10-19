@@ -24,19 +24,6 @@ import answer
 import desktop
 
 app = FastAPI(title="智慧树答题", docs_url=None, redoc_url=None, openapi_url=None)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://127.0.0.1:1420",
-        "http://localhost:1420",
-        "http://tauri.localhost",
-        "https://tauri.localhost",
-        "tauri://localhost",
-    ],
-    allow_methods=["GET", "POST"],
-    allow_headers=["content-type", "x-zhs-timestamp", "x-zhs-sign"],
-    allow_private_network=True,
-)
 
 API_TOKEN = os.environ.get("ZHS_API_TOKEN", "")
 SIGN_WINDOW_MS = 120_000
@@ -73,6 +60,21 @@ async def require_sign(request: Request, call_next):
     if not hmac.compare_digest(expected, sign):
         return JSONResponse({"error": "无权访问"}, status_code=401)
     return await call_next(request)
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://127.0.0.1:1420",
+        "http://localhost:1420",
+        "http://tauri.localhost",
+        "https://tauri.localhost",
+        "tauri://localhost",
+    ],
+    allow_methods=["GET", "POST"],
+    allow_headers=["content-type", "x-zhs-timestamp", "x-zhs-sign"],
+    allow_private_network=True,
+)
 
 api = desktop.Api()
 _login_proc = None

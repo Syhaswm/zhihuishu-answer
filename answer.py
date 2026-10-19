@@ -9,6 +9,7 @@ import json
 import re
 import socket
 import sys
+import threading
 import time
 from base64 import b64encode
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -16,7 +17,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import requests
 from Crypto.Cipher import AES
@@ -48,7 +49,10 @@ AES_KEY = b"onbfhdyvz8x7otrp"
 AES_IV = b"1g3qqdh4jvbskb9x"
 API_BASE = "https://api.deepseek.com/chat/completions"
 MODEL = "deepseek-chat"
-PARALLEL = 4
+PARALLEL = 6
+CHUNK = 4
+_PINNED_IP = None
+_PINNED_LOCK = threading.Lock()
 def _runtime_root():
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
@@ -417,21 +421,88 @@ def parse_exam(data):
     }
 
 
+def merge_cookie(cookie_text, response):
+    jar = parse_cookie(str(cookie_text or ""))
+    for item in response.cookies:
+        jar[item.name] = item.value
+    return "; ".join(f"{key}={value}" for key, value in jar.items())
+
+
+def request_with_sso(method, url, cookie_text, headers=None, data=None, timeout=30):
+    """作业接口会先跳到登录页再跳回来。把这几跳走完，不要当成登录失效。"""
+    client = session()
+    cookie_text = str(cookie_text or "")
+    current = url
+    verb = method.upper()
+    body = data
+    base_headers = dict(headers or {})
+    response = None
+    for _ in range(7):
+        hdrs = dict(base_headers)
+        if verb == "GET":
+            hdrs = {
+                "User-Agent": base_headers.get("User-Agent", HEADERS["User-Agent"]),
+                "Accept": "*/*",
+            }
+        if cookie_text:
+            hdrs["Cookie"] = cookie_text
+        response = client.request(
+            verb,
+            current,
+            headers=hdrs,
+            data=body if verb != "GET" else None,
+            timeout=timeout,
+            allow_redirects=False,
+        )
+        cookie_text = merge_cookie(cookie_text, response)
+        if response.status_code not in (301, 302, 303, 307, 308):
+            return response, cookie_text
+        location = response.headers.get("location") or ""
+        if not location:
+            return response, cookie_text
+        nxt = urljoin(response.url, location)
+        host = urlparse(nxt).netloc.lower()
+        if not (host.endswith("zhihuishu.com") or host.endswith("polymas.com")):
+            return response, cookie_text
+        if verb != "GET" and response.status_code in (301, 302, 303):
+            verb = "GET"
+            body = None
+        current = nxt
+    return response, cookie_text
+
+
+def _login_wall(response):
+    if response is None:
+        return True
+    if response.status_code in (301, 302, 303, 307, 308):
+        return True
+    return urlparse(response.url).netloc.lower().startswith("passport.")
+
+
 def fetch_exam(url, cookie=None):
     cookie_text = COOKIE if cookie is None else str(cookie).strip()
     if not cookie_text:
         raise RuntimeError("请先填写 Cookie。在已登录的浏览器里打开作业页，从 F12 复制请求头中的 Cookie。")
     payload = parse_homework_url(url)
     secret = encrypt_params(payload)
-    resp = session().post(
+    resp, cookie_text = request_with_sso(
+        "POST",
         HOMEWORK_URL,
+        cookie_text,
         headers=HEADERS,
-        cookies=parse_cookie(cookie_text),
         data={"secretStr": secret},
         timeout=30,
-        allow_redirects=False,
     )
-    if resp.status_code in (301, 302, 303, 307, 308):
+    if _login_wall(resp) or getattr(resp.request, "method", "POST") != "POST":
+        resp, _cookie_text = request_with_sso(
+            "POST",
+            HOMEWORK_URL,
+            cookie_text,
+            headers=HEADERS,
+            data={"secretStr": secret},
+            timeout=30,
+        )
+    if _login_wall(resp):
         raise RuntimeError("登录已失效。请点「切换账号」重新登录后再获取答案。")
     text = resp.text or ""
     try:
@@ -553,12 +624,23 @@ def parse_model_json(text):
     raise RuntimeError("模型没有返回 JSON")
 
 
+def deepseek_ip():
+    global _PINNED_IP
+    if _PINNED_IP:
+        return _PINNED_IP
+    with _PINNED_LOCK:
+        if _PINNED_IP:
+            return _PINNED_IP
+        ips = [ip for ip in deepseek_addresses() if ip]
+        _PINNED_IP = ips[0] if ips else ""
+        return _PINNED_IP
+
+
 @contextmanager
 def pinned_deepseek():
     import urllib3.util.connection as urllib3_cn
 
-    ips = [ip for ip in deepseek_addresses() if ip]
-    ip = ips[0] if ips else None
+    ip = deepseek_ip() or None
     original = urllib3_cn.create_connection
 
     def create_connection(address, *args, **kwargs):
@@ -572,6 +654,20 @@ def pinned_deepseek():
         yield
     finally:
         urllib3_cn.create_connection = original
+
+
+threading.Thread(target=deepseek_ip, name="deepseek-pin", daemon=True).start()
+_DEEPSEEK_LOCAL = threading.local()
+
+
+def deepseek_session():
+    client = getattr(_DEEPSEEK_LOCAL, "client", None)
+    if client is None:
+        client = session()
+        adapter = requests.adapters.HTTPAdapter(pool_connections=1, pool_maxsize=1)
+        client.mount("https://", adapter)
+        _DEEPSEEK_LOCAL.client = client
+    return client
 
 
 def ask_chunk(api_key, questions):
@@ -592,7 +688,7 @@ def ask_chunk(api_key, questions):
     resp = None
     for attempt in range(2):
         try:
-            resp = session().post(API_BASE, headers=headers, json=payload, timeout=(12, 120))
+            resp = deepseek_session().post(API_BASE, headers=headers, json=payload, timeout=(12, 120))
         except (requests.Timeout, requests.ConnectionError):
             resp = None
             continue
@@ -692,7 +788,7 @@ def align_to_options(options, raw):
     return chosen or pieces
 
 
-def question_chunks(questions, size=10):
+def question_chunks(questions, size=CHUNK):
     for start in range(0, len(questions), size):
         yield questions[start : start + size]
 

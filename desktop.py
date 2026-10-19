@@ -20,6 +20,7 @@ import webview
 import answer
 
 LOGIN_URL = "https://passport.zhihuishu.com/login?service=https%3A%2F%2Fonlineweb.zhihuishu.com%2Fonlinestuh5"
+POLY_LOGIN_URL = "https://passport.zhihuishu.com/login?service=https%3A%2F%2Fhike-teaching-center.polymas.com%2F"
 def _resource_root():
     if getattr(sys, "frozen", False):
         return Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
@@ -45,6 +46,11 @@ def _cookie_names(cookie_text):
 
 def _has_auth(cookie_text):
     return {"CASTGC", "jt-cas", "CASLOGC"}.issubset(_cookie_names(cookie_text))
+
+
+def _has_polymas(cookie_text):
+    names = _cookie_names(cookie_text)
+    return "polymas-token" in names and "AI-POLY-UINFO" in names
 
 
 def _token_expired(cookie_text):
@@ -300,21 +306,40 @@ class Api:
             pass
 
     def _harvest_http(self, cookie_text):
-        client = answer.session()
-        client.headers.update(answer.HEADERS)
-        client.cookies.update(answer.parse_cookie(cookie_text))
+        cookie = str(cookie_text or "")
         for url in (
             "https://onlineexamh5new.zhihuishu.com/stuExamWeb.html",
             "https://studentexam-api.zhihuishu.com/studentExam/gateway/t/v1/student/currentTime",
         ):
             try:
-                client.get(url, timeout=20, allow_redirects=False)
+                _resp, cookie = answer.request_with_sso(
+                    "GET",
+                    url,
+                    cookie,
+                    headers={"User-Agent": answer.HEADERS["User-Agent"], "Accept": "*/*"},
+                    timeout=20,
+                )
             except Exception:
                 continue
-        picked = []
-        for item in client.cookies:
-            picked.append(f"{item.name}={item.value}")
-        return "; ".join(picked)
+        return cookie
+
+    def _capture_polymas(self, cookie):
+        """主站登录还留在这个窗口里时，顺手打开 AI 教学中心，把那边的登录一起保存。"""
+        if _has_polymas(cookie) or not self._login_window_open():
+            return cookie
+        try:
+            self._login.load_url(POLY_LOGIN_URL)
+        except Exception:
+            return cookie
+        deadline = time.time() + 12
+        while time.time() < deadline:
+            if not self._login_window_open():
+                break
+            time.sleep(0.6)
+            cookie = self._merge_cookie(cookie, self._cookies_from_login())
+            if _has_polymas(cookie):
+                break
+        return cookie
 
     def _harvest(self, base=""):
         self._progress("正在补全登录信息…")
@@ -335,7 +360,7 @@ class Api:
                 pass
 
     def _sync_polymas(self, url, cookie, force=False):
-        if not force and "polymas-token=" in cookie and "AI-POLY-UINFO=" in cookie:
+        if not force and _has_polymas(cookie):
             return cookie
         self._progress("正在打开这份作业页，同步 AI 教学中心登录…")
         if webview.guilib is None:
@@ -349,7 +374,7 @@ class Api:
         while time.time() < deadline:
             time.sleep(1.2)
             cookie = self._merge_cookie(cookie, self._cookies_from_login())
-            if "polymas-token=" in cookie and "AI-POLY-UINFO=" in cookie:
+            if _has_polymas(cookie):
                 self._save_cookie(cookie)
                 self._hide_login()
                 return cookie
@@ -411,6 +436,7 @@ class Api:
             cookie = self._cookies_from_login()
             if not _has_auth(cookie):
                 continue
+            cookie = self._capture_polymas(cookie)
             self._hide_login()
             cookie = self._harvest(cookie)
             name = _account_name(cookie) or "已登录"

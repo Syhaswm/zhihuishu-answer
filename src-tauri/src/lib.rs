@@ -27,7 +27,20 @@ fn python_executable() -> PathBuf {
     PathBuf::from("python")
 }
 
+fn stop_stale_api() {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let script = "Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'python' -and $_.CommandLine -like '*server.app:app*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }";
+        let _ = Command::new("powershell")
+            .args(["-NoProfile", "-Command", script])
+            .creation_flags(0x08000000)
+            .output();
+    }
+}
+
 fn start_api(token: &str) -> Option<Child> {
+    stop_stale_api();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut command = Command::new(python_executable());
     command

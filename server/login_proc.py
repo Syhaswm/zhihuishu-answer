@@ -38,7 +38,7 @@ def sync_polymas():
             if not api._login_window_open():
                 break
             cookie = api._merge_cookie(cookie, api._cookies_from_login())
-            if "polymas-token=" in cookie and "AI-POLY-UINFO=" in cookie:
+            if desktop._has_polymas(cookie):
                 api._save_cookie(cookie)
                 ok = True
                 break
