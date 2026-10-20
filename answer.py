@@ -48,7 +48,19 @@ HOMEWORK_URL = "https://studentexam-api.zhihuishu.com/studentExam/gateway/t/v1/s
 AES_KEY = b"onbfhdyvz8x7otrp"
 AES_IV = b"1g3qqdh4jvbskb9x"
 API_BASE = "https://api.deepseek.com/chat/completions"
-MODEL = "deepseek-chat"
+MODEL = "deepseek-flash"
+PROVIDERS = [
+    {"id": "deepseek", "name": "DeepSeek", "url": API_BASE, "model": MODEL, "needsKey": True, "hint": "在 DeepSeek 开放平台创建的 Key"},
+    {"id": "qwen", "name": "通义千问", "url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", "model": "qwen-plus", "needsKey": True, "hint": "阿里云百炼的 API Key"},
+    {"id": "zhipu", "name": "智谱 GLM", "url": "https://open.bigmodel.cn/api/paas/v4/chat/completions", "model": "glm-4-flash", "needsKey": True, "hint": "智谱开放平台的 API Key"},
+    {"id": "kimi", "name": "Kimi", "url": "https://api.moonshot.cn/v1/chat/completions", "model": "moonshot-v1-8k", "needsKey": True, "hint": "Moonshot 开放平台的 API Key"},
+    {"id": "doubao", "name": "豆包", "url": "https://ark.cn-beijing.volces.com/api/v3/chat/completions", "model": "", "needsKey": True, "hint": "火山方舟的 API Key，模型填接入点 ID"},
+    {"id": "openai", "name": "OpenAI", "url": "https://api.openai.com/v1/chat/completions", "model": "gpt-4o-mini", "needsKey": True, "hint": "OpenAI 的 API Key"},
+    {"id": "gemini", "name": "Gemini", "url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", "model": "gemini-2.0-flash", "needsKey": True, "hint": "Google AI Studio 的 API Key"},
+    {"id": "ollama", "name": "本地 Ollama", "url": "http://127.0.0.1:11434/v1/chat/completions", "model": "qwen2.5:7b", "needsKey": False, "hint": "先在本机启动 Ollama，模型名与本地一致"},
+    {"id": "lmstudio", "name": "本地 LM Studio", "url": "http://127.0.0.1:1234/v1/chat/completions", "model": "", "needsKey": False, "hint": "先在 LM Studio 里加载模型并打开本地服务"},
+    {"id": "custom", "name": "自定义接口", "url": "", "model": "", "needsKey": False, "hint": "填写兼容 OpenAI 的接口地址和模型名"},
+]
 PARALLEL = 6
 CHUNK = 4
 _PINNED_IP = None
@@ -670,41 +682,188 @@ def deepseek_session():
     return client
 
 
-def ask_chunk(api_key, questions):
-    payload = {
-        "model": MODEL,
-        "temperature": 0.1,
-        "max_tokens": 2500,
-        "response_format": {"type": "json_object"},
-        "messages": [
-            {"role": "system", "content": "你只根据题目和选项作答，并且只输出 JSON。"},
-            {"role": "user", "content": build_prompt(questions)},
-        ],
-    }
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    resp = None
-    for attempt in range(2):
+def find_provider(provider_id):
+    for item in PROVIDERS:
+        if item["id"] == provider_id:
+            return item
+    return PROVIDERS[0]
+
+
+def resolve_provider(provider_id, model, base_url):
+    found = find_provider(provider_id)
+    endpoint = provider_endpoint(found, base_url)
+    chosen = str(model or "").strip() or found["model"]
+    if not endpoint.startswith(("http://", "https://")):
+        raise RuntimeError("接口地址需要以 http:// 或 https:// 开头。")
+    if not chosen:
+        raise RuntimeError("请填写模型名称。")
+    return found, endpoint, chosen
+
+
+def provider_endpoint(found, base_url):
+    typed = str(base_url or "").strip()
+    if found["id"] in ("custom", "ollama", "lmstudio", "doubao"):
+        return typed or found["url"]
+    return found["url"] or typed
+
+
+def _model_list_urls(endpoint):
+    root = str(endpoint or "").strip().rstrip("/")
+    if root.endswith("/chat/completions"):
+        root = root[: -len("/chat/completions")]
+    urls = [root + "/models"]
+    if "11434" in root:
+        urls.append("http://127.0.0.1:11434/api/tags")
+    if "generativelanguage.googleapis.com" in root:
+        urls.append("https://generativelanguage.googleapis.com/v1beta/models")
+    return urls
+
+
+def _collect_model_names(payload):
+    names = []
+
+    def add(value):
+        text = str(value or "").strip()
+        if text.startswith("models/"):
+            text = text.split("/", 1)[1]
+        if text and text not in names:
+            names.append(text)
+
+    if isinstance(payload, list):
+        for item in payload:
+            if isinstance(item, str):
+                add(item)
+            elif isinstance(item, dict):
+                add(item.get("id") or item.get("name") or item.get("model"))
+        return names
+    if not isinstance(payload, dict):
+        return names
+    buckets = [payload.get("data"), payload.get("models")]
+    output = payload.get("output")
+    if isinstance(output, dict):
+        buckets.append(output.get("models") or output.get("data"))
+    for bucket in buckets:
+        if isinstance(bucket, list):
+            names.extend(_collect_model_names(bucket))
+        elif isinstance(bucket, dict):
+            names.extend(_collect_model_names(bucket.get("models") or bucket.get("data") or []))
+    return names
+
+
+def list_models(provider_id, base_url, api_key):
+    found = find_provider(provider_id)
+    endpoint = provider_endpoint(found, base_url)
+    if not endpoint.startswith(("http://", "https://")):
+        raise RuntimeError("接口地址需要以 http:// 或 https:// 开头。")
+    if found["needsKey"] and not str(api_key or "").strip():
+        raise RuntimeError(f"请先填写{found['name']}自己的 API Key。现在用的如果是别的厂商的 Key，列表会失败。")
+    headers = {"Accept": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+        headers["x-goog-api-key"] = api_key
+    last_error = "这个接口没有返回模型名称。"
+    for url in _model_list_urls(endpoint):
         try:
-            resp = deepseek_session().post(API_BASE, headers=headers, json=payload, timeout=(12, 120))
+            response = session().get(url, headers=headers, timeout=20)
+        except requests.RequestException:
+            last_error = f"连不上{found['name']}的模型列表。请检查网络，本地模型要先启动。"
+            continue
+        try:
+            payload = response.json()
+        except ValueError:
+            last_error = f"模型列表不是 JSON（HTTP {response.status_code}）。"
+            continue
+        if not response.ok:
+            message = ""
+            if isinstance(payload, dict):
+                message = str(((payload.get("error") or {}).get("message")) or payload.get("msg") or "")
+            last_error = "获取模型列表失败：" + (message or response.text[:200])
+            continue
+        names = _collect_model_names(payload)
+        if names:
+            return names
+    if found["id"] == "doubao":
+        raise RuntimeError("豆包没有公开模型目录。请在火山方舟复制接入点 ID，填到模型名称。")
+    raise RuntimeError(last_error)
+
+
+def probe_connection(provider_id, model, base_url, api_key):
+    found, endpoint, chosen = resolve_provider(provider_id, model, base_url)
+    if found["needsKey"] and not str(api_key or "").strip():
+        raise RuntimeError(f"请先填写{found['name']}的 API Key，再测试连接。")
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+        headers["x-goog-api-key"] = api_key
+    payload = {
+        "model": chosen,
+        "temperature": 0,
+        "max_tokens": 16,
+        "messages": [{"role": "user", "content": "只回复OK"}],
+    }
+    try:
+        response = session().post(endpoint, headers=headers, json=payload, timeout=(8, 40))
+    except requests.RequestException as exc:
+        raise RuntimeError(f"连不上{found['name']}。请检查网络、接口地址，本地模型要先启动。") from exc
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise RuntimeError(f"{found['name']} 没有返回 JSON（HTTP {response.status_code}）。") from exc
+    if not response.ok:
+        message = ""
+        if isinstance(data, dict):
+            message = str(((data.get("error") or {}).get("message")) or data.get("msg") or "")
+        raise RuntimeError(f"{found['name']} {response.status_code}：" + (message or response.text[:200]))
+    content = (((data.get("choices") or [{}])[0].get("message") or {}).get("content")) if isinstance(data, dict) else ""
+    if content is None and isinstance(data, dict):
+        content = ""
+    return {"name": found["name"], "model": chosen, "reply": str(content or "").strip()[:40]}
+
+
+def ask_chunk(api_key, questions, endpoint=None, model=None, provider_name="DeepSeek"):
+    endpoint = endpoint or API_BASE
+    model = model or MODEL
+    label = provider_name or "模型"
+    use_json_format = True
+    resp = None
+    for attempt in range(3):
+        payload = {
+            "model": model,
+            "temperature": 0.1,
+            "max_tokens": 2500,
+            "messages": [
+                {"role": "system", "content": "你只根据题目和选项作答，并且只输出 JSON。"},
+                {"role": "user", "content": build_prompt(questions)},
+            ],
+        }
+        if use_json_format:
+            payload["response_format"] = {"type": "json_object"}
+        if "deepseek" in str(model or "").lower() or "api.deepseek.com" in str(endpoint):
+            payload["thinking"] = {"type": "disabled"}
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        try:
+            resp = deepseek_session().post(endpoint, headers=headers, json=payload, timeout=(12, 120))
         except (requests.Timeout, requests.ConnectionError):
             resp = None
             continue
-        if resp.status_code == 429 and attempt == 0:
+        if resp is not None and resp.status_code == 400 and use_json_format:
+            use_json_format = False
+            continue
+        if resp is not None and resp.status_code == 429 and attempt < 2:
             time.sleep(1.2)
             continue
         break
     if resp is None:
-        raise RuntimeError("连不上 DeepSeek。请检查网络后再点一次获取答案。")
+        raise RuntimeError(f"连不上{label}。请检查网络、接口地址，本地模型要先在本机启动。")
     try:
         data = resp.json()
     except ValueError:
-        raise RuntimeError(f"DeepSeek 返回的不是 JSON（HTTP {resp.status_code}）")
+        raise RuntimeError(f"{label} 返回的不是 JSON（HTTP {resp.status_code}）")
     if not resp.ok:
         message = ((data.get("error") or {}).get("message")) or resp.text[:300]
-        raise RuntimeError(f"DeepSeek {resp.status_code}：{message}")
+        raise RuntimeError(f"{label} {resp.status_code}：{message}")
     content = (((data.get("choices") or [{}])[0].get("message") or {}).get("content")) or ""
     parsed = parse_model_json(content)
     answers = parsed.get("answers") if isinstance(parsed, dict) else None

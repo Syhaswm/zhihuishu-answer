@@ -3,6 +3,7 @@
 import base64
 import ctypes
 import functools
+from contextlib import nullcontext
 import json
 import shutil
 import subprocess
@@ -125,11 +126,27 @@ class Api:
         cookie = self._saved_cookie()
         expired = _has_auth(cookie) and _token_expired(cookie)
         name = "" if expired else _account_name(cookie)
+        pref = self._read_pref()
+        provider = answer.find_provider(pref.get("provider"))
+        saved_model = str(pref.get("model") or "")
+        if provider["id"] == "deepseek" and saved_model in ("", "deepseek-chat"):
+            saved_model = provider["model"]
+        keys = pref.get("keys") if isinstance(pref.get("keys"), dict) else {}
+        if api_key and not keys.get("deepseek"):
+            keys["deepseek"] = api_key
+        current_key = keys.get(provider["id"]) or ""
+        if provider["id"] == "deepseek" and not current_key:
+            current_key = api_key
         return {
-            "apiKey": api_key,
+            "apiKey": current_key,
+            "keys": keys,
             "name": name,
             "expired": expired,
             "saveAnswers": self._save_answers(),
+            "provider": provider["id"],
+            "model": saved_model or provider["model"],
+            "baseUrl": pref.get("baseUrl") or provider["url"],
+            "providers": answer.PROVIDERS,
             "files": self._answer_files(),
         }
 
@@ -162,21 +179,33 @@ class Api:
     def _pref_path(self):
         return answer.ROOT / "settings.json"
 
-    def _save_answers(self):
+    def _read_pref(self):
         path = self._pref_path()
         if not path.exists():
-            return True
+            return {}
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            return True
-        return bool(data.get("saveAnswers", True))
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _save_answers(self):
+        return bool(self._read_pref().get("saveAnswers", True))
 
     def _write_pref(self, enabled):
-        self._pref_path().write_text(
-            json.dumps({"saveAnswers": bool(enabled)}, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        data = self._read_pref()
+        data["saveAnswers"] = bool(enabled)
+        self._pref_path().write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+    def _save_model_pref(self, provider, model, base_url, api_key=""):
+        data = self._read_pref()
+        data["provider"] = provider
+        data["model"] = model
+        data["baseUrl"] = base_url
+        keys = data.get("keys") if isinstance(data.get("keys"), dict) else {}
+        keys[provider] = str(api_key or "")
+        data["keys"] = keys
+        self._pref_path().write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
     def _answer_dir(self):
         return answer.ROOT / "答案"
@@ -534,11 +563,15 @@ class Api:
                     errors[index] = exc
         return fetched, errors
 
-    def solve_batch(self, text, api_key):
+    def solve_batch(self, text, api_key, provider="deepseek", model="", base_url=""):
         urls = answer.split_homework_urls(text)
         if not urls:
             return {"ok": False, "error": "请输入作业页地址，每行一个。", "papers": []}
         try:
+            provider_info, endpoint, model_name = answer.resolve_provider(provider, model, base_url)
+            if provider_info["needsKey"] and not str(api_key or "").strip():
+                raise RuntimeError(f"请填写{provider_info['name']}的 API Key。")
+            self._save_model_pref(provider_info["id"], model_name, endpoint, api_key)
             api_key, cookie = self._prepare_solve(api_key)
         except Exception as exc:
             return {"ok": False, "error": str(exc), "papers": []}
@@ -568,11 +601,19 @@ class Api:
         if jobs:
             self._progress(f"正在同时解答 {len(jobs)} 组题目…")
             done = 0
-            with answer.pinned_deepseek():
+            pin = answer.pinned_deepseek() if "api.deepseek.com" in endpoint else nullcontext()
+            with pin:
                 workers = min(answer.PARALLEL, len(jobs))
                 with ThreadPoolExecutor(max_workers=workers) as pool:
                     futures = {
-                        pool.submit(answer.ask_chunk, api_key, chunk): (index, chunk)
+                        pool.submit(
+                            answer.ask_chunk,
+                            api_key,
+                            chunk,
+                            endpoint,
+                            model_name,
+                            provider_info["name"],
+                        ): (index, chunk)
                         for index, chunk in jobs
                     }
                     for future in as_completed(futures):

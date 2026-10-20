@@ -1,10 +1,23 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
-import { BackTop, Banner, Button, Card, Checkbox, Input, Modal, Pagination, Switch, Tag, TextArea, Toast } from "@kousum/semi-ui-vue";
+import { BackTop, Banner, Button, Card, Checkbox, Input, Modal, Pagination, Select, Switch, Tag, TextArea, Toast } from "@kousum/semi-ui-vue";
 import * as api from "./api";
 
 const url = ref("");
 const apiKey = ref("");
+const providerKeys = ref({});
+const provider = ref("deepseek");
+const modelName = ref("deepseek-flash");
+const modelOptions = ref([]);
+const loadingModels = ref(false);
+const testingLink = ref(false);
+const modelHint = ref("");
+const connectHint = ref("");
+const connectOk = ref(false);
+const baseUrl = ref("https://api.deepseek.com/chat/completions");
+const providers = ref([
+  { id: "deepseek", name: "DeepSeek", url: "https://api.deepseek.com/chat/completions", model: "deepseek-flash", needsKey: true, hint: "在 DeepSeek 开放平台创建的 Key" },
+]);
 const scroller = ref(null);
 const loading = ref(false);
 const loggingIn = ref(false);
@@ -24,6 +37,8 @@ const updateInfo = ref(null);
 const keyPage = "https://platform.deepseek.com/api_keys";
 
 const currentPaper = computed(() => papers.value[page.value - 1] || null);
+const currentProvider = computed(() => providers.value.find((item) => item.id === provider.value) || providers.value[0]);
+const providerOptions = computed(() => providers.value.map((item) => ({ value: item.id, label: item.name })));
 const visibleFiles = computed(() =>
   showAllFiles.value ? answerFiles.value : answerFiles.value.slice(0, 3)
 );
@@ -64,7 +79,17 @@ async function loadSettings() {
     status.value = "答题服务还没启动，请稍等再打开一次。";
     return;
   }
-  apiKey.value = data.apiKey || "";
+  if (Array.isArray(data.providers) && data.providers.length) providers.value = data.providers;
+  provider.value = data.provider || "deepseek";
+  providerKeys.value = data.keys && typeof data.keys === "object" ? { ...data.keys } : {};
+  if (data.apiKey && !providerKeys.value[provider.value]) {
+    providerKeys.value[provider.value] = data.apiKey;
+  }
+  apiKey.value = providerKeys.value[provider.value] || "";
+  const savedModel = data.model || "";
+  modelName.value =
+    !savedModel || savedModel === "deepseek-chat" ? currentProvider.value?.model || "deepseek-flash" : savedModel;
+  baseUrl.value = data.baseUrl || currentProvider.value?.url || "";
   accountName.value = data.name || "";
   saveAnswers.value = data.saveAnswers !== false;
   answerFiles.value = data.files || [];
@@ -105,6 +130,77 @@ async function login() {
     }
   } finally {
     loggingIn.value = false;
+  }
+}
+
+function chooseProvider(value) {
+  providerKeys.value = { ...providerKeys.value, [provider.value]: apiKey.value };
+  provider.value = value;
+  modelOptions.value = [];
+  modelHint.value = "";
+  connectHint.value = "";
+  apiKey.value = providerKeys.value[value] || "";
+  const found = providers.value.find((item) => item.id === value);
+  if (!found) return;
+  modelName.value = found.model || "";
+  baseUrl.value = found.url || "";
+}
+
+async function fetchModels() {
+  error.value = "";
+  modelHint.value = "";
+  const found = currentProvider.value;
+  if (found && found.needsKey && !String(apiKey.value || "").trim()) {
+    modelHint.value = `请先填写${found.name}的 API Key，再获取模型列表。`;
+    Toast.warning(modelHint.value);
+    return;
+  }
+  loadingModels.value = true;
+  try {
+    const data = await api.listModels(provider.value, baseUrl.value, apiKey.value);
+    if (!data.ok) throw new Error(data.error || "没有获取到模型");
+    modelOptions.value = data.models || [];
+    if (!modelName.value && modelOptions.value.length) modelName.value = modelOptions.value[0];
+    Toast.success(`已获取 ${modelOptions.value.length} 个模型`);
+  } catch (err) {
+    modelOptions.value = [];
+    const message = err.message || String(err);
+    modelHint.value = message;
+    error.value = message;
+    Toast.warning(message);
+  } finally {
+    loadingModels.value = false;
+  }
+}
+
+async function testConnection() {
+  connectHint.value = "";
+  const found = currentProvider.value;
+  if (!String(modelName.value || "").trim()) {
+    connectOk.value = false;
+    connectHint.value = "请先填写模型名称，再测试连接。";
+    Toast.warning(connectHint.value);
+    return;
+  }
+  if (found && found.needsKey && !String(apiKey.value || "").trim()) {
+    connectOk.value = false;
+    connectHint.value = `请先填写${found.name}的 API Key，再测试连接。`;
+    Toast.warning(connectHint.value);
+    return;
+  }
+  testingLink.value = true;
+  try {
+    const data = await api.testModel(provider.value, baseUrl.value, apiKey.value, modelName.value);
+    if (!data.ok) throw new Error(data.error || "连接失败");
+    connectOk.value = true;
+    connectHint.value = `${data.name || found?.name || "模型"} 已连通，可以使用 ${data.model}。`;
+    Toast.success("连接成功");
+  } catch (err) {
+    connectOk.value = false;
+    connectHint.value = err.message || String(err);
+    Toast.warning(connectHint.value);
+  } finally {
+    testingLink.value = false;
   }
 }
 
@@ -231,9 +327,16 @@ async function start() {
   loading.value = true;
   status.value = "正在同时获取每一份作业…";
   try {
-    const resp = await api.solveBatch(url.value, apiKey.value, (message) => {
-      status.value = message;
-    });
+    const resp = await api.solveBatch(
+      url.value,
+      apiKey.value,
+      provider.value,
+      modelName.value,
+      baseUrl.value,
+      (message) => {
+        status.value = message;
+      }
+    );
     if (!resp) throw new Error("没有返回结果");
     papers.value = resp.papers || [];
     page.value = 1;
@@ -279,13 +382,41 @@ async function start() {
           />
         </div>
         <div class="field">
-          <div class="field-label">DeepSeek API Key</div>
+          <div class="field-label">模型</div>
+          <Select :value="provider" :optionList="providerOptions" style="width: 100%" @change="chooseProvider" />
+          <div class="save-hint">{{ currentProvider?.hint }}</div>
+        </div>
+        <div v-if="provider === 'custom' || provider === 'ollama' || provider === 'lmstudio' || provider === 'doubao'" class="field">
+          <div class="field-label">接口地址</div>
+          <Input :value="baseUrl" placeholder="https:// 或 http://127.0.0.1" @change="(value) => (baseUrl = value)" />
+        </div>
+        <div class="field">
+          <div class="field-label">模型名称</div>
+          <div class="model-row">
+            <Input :value="modelName" placeholder="例如 deepseek-flash、qwen-plus" @change="(value) => (modelName = value)" />
+            <Button :loading="loadingModels" @click="fetchModels">获取模型列表</Button>
+          </div>
+          <div v-if="modelHint" class="model-hint">{{ modelHint }}</div>
+          <Select
+            v-if="modelOptions.length"
+            :value="modelName"
+            :optionList="modelOptions.map((name) => ({ value: name, label: name }))"
+            style="width: 100%; margin-top: 8px"
+            @change="(value) => (modelName = value)"
+          />
+        </div>
+        <div class="field">
+          <div class="field-label">{{ currentProvider?.needsKey ? "API Key" : "API Key（本地模型可以不填）" }}</div>
           <Input
             :value="apiKey"
             mode="password"
             placeholder="sk-..."
             @change="(value) => (apiKey = value)"
           />
+          <div class="model-row" style="margin-top: 8px">
+            <Button :loading="testingLink" @click="testConnection">测试连接</Button>
+          </div>
+          <div v-if="connectHint" class="model-hint" :class="{ 'is-ok': connectOk }">{{ connectHint }}</div>
         </div>
         <div class="account">{{ accountName ? "当前账号：" + accountName : "当前账号：未登录" }}</div>
         <div class="actions">
@@ -418,10 +549,12 @@ async function start() {
         <Button size="small" theme="solid" type="primary" @click="openKeyPage">打开 API keys 页面</Button>
         <h2>把 Key 填进软件</h2>
         <ol>
-          <li>回到本软件，把复制的 Key 粘贴到「DeepSeek API Key」。</li>
+          <li>回到本软件，模型选 DeepSeek，把复制的 Key 粘贴到「API Key」。</li>
           <li>点一次「获取答案」。软件会记住这把 Key，下次打开不用再填。</li>
           <li>要换 Key 时，把输入框里的内容改掉，再点一次「获取答案」。</li>
         </ol>
+        <h2>换成其他模型</h2>
+        <p>模型可以换成通义千问、智谱、Kimi、豆包、OpenAI、Gemini，也可以用本机的 Ollama 或 LM Studio。这些接口都按同一种对话格式调用。本地模型要先在自己电脑上启动。没有列出的服务，选「自定义接口」，填它的地址和模型名。</p>
         <h2>怎么使用</h2>
         <ol>
           <li>点「登录账号」，在弹出的窗口登录正在做这份作业的智慧树账号。登录会保存，界面上能看到当前账号。要换人时再点「切换账号」。</li>

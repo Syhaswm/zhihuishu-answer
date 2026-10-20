@@ -60,6 +60,22 @@ export async function appVersion() {
   return invoke("app_version");
 }
 
+export function listModels(provider, baseUrl, apiKey) {
+  return request("/api/models", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider, baseUrl, apiKey }),
+  });
+}
+
+export function testModel(provider, baseUrl, apiKey, model) {
+  return request("/api/models/test", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider, baseUrl, apiKey, model }),
+  });
+}
+
 export function checkUpdate(current) {
   return request("/api/update", {
     method: "POST",
@@ -116,8 +132,8 @@ export function loginStatus() {
   return request("/api/login/status");
 }
 
-export async function solveBatch(urls, apiKey, onProgress) {
-  const body = JSON.stringify({ urls, apiKey });
+export async function solveBatch(urls, apiKey, provider, model, baseUrl, onProgress) {
+  const body = JSON.stringify({ urls, apiKey, provider, model, baseUrl });
   let response;
   try {
     response = await fetch(API + "/api/solve", {

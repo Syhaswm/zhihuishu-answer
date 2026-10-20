@@ -96,6 +96,9 @@ class OpenIn(BaseModel):
 class SolveIn(BaseModel):
     urls: str = ""
     apiKey: str = ""
+    provider: str = "deepseek"
+    model: str = ""
+    baseUrl: str = ""
 
 
 class LoginIn(BaseModel):
@@ -104,6 +107,13 @@ class LoginIn(BaseModel):
 
 class UpdateIn(BaseModel):
     current: str = ""
+
+
+class ModelsIn(BaseModel):
+    provider: str = "deepseek"
+    baseUrl: str = ""
+    apiKey: str = ""
+    model: str = ""
 
 
 def _version_key(text):
@@ -152,6 +162,24 @@ def delete_all_answers():
 @app.post("/api/open-url")
 def open_url(body: OpenIn):
     return api.open_url(body.url)
+
+
+@app.post("/api/models")
+def model_list(body: ModelsIn):
+    try:
+        names = answer.list_models(body.provider, body.baseUrl, body.apiKey)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc), "models": []}
+    return {"ok": True, "models": names}
+
+
+@app.post("/api/models/test")
+def test_model(body: ModelsIn):
+    try:
+        result = answer.probe_connection(body.provider, body.model, body.baseUrl, body.apiKey)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, **result}
 
 
 @app.post("/api/update")
@@ -224,7 +252,7 @@ def solve(body: SolveIn):
     def work():
         api._on_progress = on_progress
         try:
-            result = api.solve_batch(body.urls, body.apiKey)
+            result = api.solve_batch(body.urls, body.apiKey, body.provider, body.model, body.baseUrl)
         except Exception as exc:
             result = {"ok": False, "error": str(exc), "papers": [], "summary": str(exc)}
         finally:
