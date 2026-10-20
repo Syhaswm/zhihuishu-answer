@@ -132,8 +132,8 @@ export function loginStatus() {
   return request("/api/login/status");
 }
 
-export async function solveBatch(urls, apiKey, provider, model, baseUrl, onProgress) {
-  const body = JSON.stringify({ urls, apiKey, provider, model, baseUrl });
+export async function solveBatch(urls, apiKey, provider, model, baseUrl, thinking, onProgress) {
+  const body = JSON.stringify({ urls, apiKey, provider, model, baseUrl, thinking });
   let response;
   try {
     response = await fetch(API + "/api/solve", {

@@ -820,7 +820,34 @@ def probe_connection(provider_id, model, base_url, api_key):
     return {"name": found["name"], "model": chosen, "reply": str(content or "").strip()[:40]}
 
 
-def ask_chunk(api_key, questions, endpoint=None, model=None, provider_name="DeepSeek"):
+def supports_thinking(provider_id, model):
+    name = str(model or "").lower()
+    if provider_id == "deepseek" or "deepseek" in name:
+        return True
+    if any(token in name for token in ("thinking", "reason", "-r1", "qwq", "qwen3")):
+        return True
+    if "glm-4.5" in name or "glm-4.6" in name or "glm-4.7" in name or "glm-5" in name:
+        return True
+    return False
+
+
+def _apply_thinking(payload, provider_id, model, endpoint, enabled):
+    if not supports_thinking(provider_id, model) and "api.deepseek.com" not in str(endpoint):
+        return
+    if provider_id == "qwen" or "qwen" in str(model or "").lower() or "qwq" in str(model or "").lower():
+        payload["enable_thinking"] = bool(enabled)
+        return
+    if (
+        provider_id == "deepseek"
+        or provider_id == "zhipu"
+        or "deepseek" in str(model or "").lower()
+        or "api.deepseek.com" in str(endpoint)
+        or "glm" in str(model or "").lower()
+    ):
+        payload["thinking"] = {"type": "enabled" if enabled else "disabled"}
+
+
+def ask_chunk(api_key, questions, endpoint=None, model=None, provider_name="DeepSeek", provider_id="", thinking=False):
     endpoint = endpoint or API_BASE
     model = model or MODEL
     label = provider_name or "模型"
@@ -838,8 +865,7 @@ def ask_chunk(api_key, questions, endpoint=None, model=None, provider_name="Deep
         }
         if use_json_format:
             payload["response_format"] = {"type": "json_object"}
-        if "deepseek" in str(model or "").lower() or "api.deepseek.com" in str(endpoint):
-            payload["thinking"] = {"type": "disabled"}
+        _apply_thinking(payload, provider_id, model, endpoint, thinking)
         headers = {"Content-Type": "application/json"}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"

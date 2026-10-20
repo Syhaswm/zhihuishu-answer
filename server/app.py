@@ -99,6 +99,7 @@ class SolveIn(BaseModel):
     provider: str = "deepseek"
     model: str = ""
     baseUrl: str = ""
+    thinking: bool = False
 
 
 class LoginIn(BaseModel):
@@ -252,7 +253,9 @@ def solve(body: SolveIn):
     def work():
         api._on_progress = on_progress
         try:
-            result = api.solve_batch(body.urls, body.apiKey, body.provider, body.model, body.baseUrl)
+            result = api.solve_batch(
+                body.urls, body.apiKey, body.provider, body.model, body.baseUrl, body.thinking
+            )
         except Exception as exc:
             result = {"ok": False, "error": str(exc), "papers": [], "summary": str(exc)}
         finally:

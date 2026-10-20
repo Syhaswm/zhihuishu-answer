@@ -146,6 +146,7 @@ class Api:
             "provider": provider["id"],
             "model": saved_model or provider["model"],
             "baseUrl": pref.get("baseUrl") or provider["url"],
+            "thinking": bool(pref.get("thinking", False)),
             "providers": answer.PROVIDERS,
             "files": self._answer_files(),
         }
@@ -197,11 +198,12 @@ class Api:
         data["saveAnswers"] = bool(enabled)
         self._pref_path().write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
-    def _save_model_pref(self, provider, model, base_url, api_key=""):
+    def _save_model_pref(self, provider, model, base_url, api_key="", thinking=False):
         data = self._read_pref()
         data["provider"] = provider
         data["model"] = model
         data["baseUrl"] = base_url
+        data["thinking"] = bool(thinking)
         keys = data.get("keys") if isinstance(data.get("keys"), dict) else {}
         keys[provider] = str(api_key or "")
         data["keys"] = keys
@@ -563,7 +565,7 @@ class Api:
                     errors[index] = exc
         return fetched, errors
 
-    def solve_batch(self, text, api_key, provider="deepseek", model="", base_url=""):
+    def solve_batch(self, text, api_key, provider="deepseek", model="", base_url="", thinking=False):
         urls = answer.split_homework_urls(text)
         if not urls:
             return {"ok": False, "error": "请输入作业页地址，每行一个。", "papers": []}
@@ -571,7 +573,7 @@ class Api:
             provider_info, endpoint, model_name = answer.resolve_provider(provider, model, base_url)
             if provider_info["needsKey"] and not str(api_key or "").strip():
                 raise RuntimeError(f"请填写{provider_info['name']}的 API Key。")
-            self._save_model_pref(provider_info["id"], model_name, endpoint, api_key)
+            self._save_model_pref(provider_info["id"], model_name, endpoint, api_key, thinking)
             api_key, cookie = self._prepare_solve(api_key)
         except Exception as exc:
             return {"ok": False, "error": str(exc), "papers": []}
@@ -613,6 +615,8 @@ class Api:
                             endpoint,
                             model_name,
                             provider_info["name"],
+                            provider_info["id"],
+                            bool(thinking) and answer.supports_thinking(provider_info["id"], model_name),
                         ): (index, chunk)
                         for index, chunk in jobs
                     }

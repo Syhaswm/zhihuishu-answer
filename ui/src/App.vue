@@ -14,6 +14,7 @@ const testingLink = ref(false);
 const modelHint = ref("");
 const connectHint = ref("");
 const connectOk = ref(false);
+const thinking = ref(false);
 const baseUrl = ref("https://api.deepseek.com/chat/completions");
 const providers = ref([
   { id: "deepseek", name: "DeepSeek", url: "https://api.deepseek.com/chat/completions", model: "deepseek-flash", needsKey: true, hint: "在 DeepSeek 开放平台创建的 Key" },
@@ -38,6 +39,14 @@ const keyPage = "https://platform.deepseek.com/api_keys";
 
 const currentPaper = computed(() => papers.value[page.value - 1] || null);
 const currentProvider = computed(() => providers.value.find((item) => item.id === provider.value) || providers.value[0]);
+function modelSupportsThinking(providerId, model) {
+  const name = String(model || "").toLowerCase();
+  if (providerId === "deepseek" || name.includes("deepseek")) return true;
+  if (["thinking", "reason", "-r1", "qwq", "qwen3"].some((token) => name.includes(token))) return true;
+  if (name.includes("glm-4.5") || name.includes("glm-4.6") || name.includes("glm-4.7") || name.includes("glm-5")) return true;
+  return false;
+}
+const supportsThinking = computed(() => modelSupportsThinking(provider.value, modelName.value));
 const providerOptions = computed(() => providers.value.map((item) => ({ value: item.id, label: item.name })));
 const visibleFiles = computed(() =>
   showAllFiles.value ? answerFiles.value : answerFiles.value.slice(0, 3)
@@ -90,6 +99,7 @@ async function loadSettings() {
   modelName.value =
     !savedModel || savedModel === "deepseek-chat" ? currentProvider.value?.model || "deepseek-flash" : savedModel;
   baseUrl.value = data.baseUrl || currentProvider.value?.url || "";
+  thinking.value = !!data.thinking;
   accountName.value = data.name || "";
   saveAnswers.value = data.saveAnswers !== false;
   answerFiles.value = data.files || [];
@@ -333,6 +343,7 @@ async function start() {
       provider.value,
       modelName.value,
       baseUrl.value,
+      thinking.value && supportsThinking.value,
       (message) => {
         status.value = message;
       }
@@ -397,6 +408,13 @@ async function start() {
             <Button :loading="loadingModels" @click="fetchModels">获取模型列表</Button>
           </div>
           <div v-if="modelHint" class="model-hint">{{ modelHint }}</div>
+          <div v-if="supportsThinking" class="save-row thinking-row">
+            <div>
+              <div class="field-label">思考模式</div>
+              <div v-if="thinking" class="model-hint">开启后模型会先思考再作答，获取答案会花更多时间。</div>
+            </div>
+            <Switch :checked="thinking" @change="(value) => (thinking = isChecked(value))" />
+          </div>
           <Select
             v-if="modelOptions.length"
             :value="modelName"
