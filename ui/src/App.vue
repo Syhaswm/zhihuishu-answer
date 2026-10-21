@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { BackTop, Banner, Button, Card, Checkbox, Input, Modal, Pagination, Select, Switch, Tag, TextArea, Toast } from "@kousum/semi-ui-vue";
 import * as api from "./api";
+import { applyDockLayout, DOCK_WIDTH_DEFAULT } from "./dock";
 
 const url = ref("");
 const apiKey = ref("");
@@ -36,6 +37,15 @@ const paperAnchor = ref(null);
 const helpOpen = ref(false);
 const updateInfo = ref(null);
 const keyPage = "https://platform.deepseek.com/api_keys";
+const dockSide = ref("off");
+const dockWidth = ref(DOCK_WIDTH_DEFAULT);
+const dockOnTop = ref(true);
+const showDockSettings = ref(true);
+const dockModeOptions = [
+  { value: "off", label: "常规窗口" },
+  { value: "left", label: "贴在屏幕左侧" },
+  { value: "right", label: "贴在屏幕右侧" },
+];
 
 const currentPaper = computed(() => papers.value[page.value - 1] || null);
 const currentProvider = computed(() => providers.value.find((item) => item.id === provider.value) || providers.value[0]);
@@ -51,6 +61,7 @@ const providerOptions = computed(() => providers.value.map((item) => ({ value: i
 const visibleFiles = computed(() =>
   showAllFiles.value ? answerFiles.value : answerFiles.value.slice(0, 3)
 );
+const isDocked = computed(() => dockSide.value === "left" || dockSide.value === "right");
 
 function showPage(next) {
   const total = papers.value.length;
@@ -105,6 +116,45 @@ async function loadSettings() {
   answerFiles.value = data.files || [];
   if (data.expired) {
     status.value = "登录已过期。请点「切换账号」重新登录。";
+  }
+  dockSide.value = data.dockSide || "off";
+  dockWidth.value = data.dockWidth || DOCK_WIDTH_DEFAULT;
+  dockOnTop.value = data.dockOnTop !== false;
+  showDockSettings.value = !isDocked.value;
+  if (isDocked.value) {
+    try {
+      await applyDockLayout(dockSide.value, dockWidth.value, dockOnTop.value);
+    } catch (err) {
+      Toast.warning(err.message || "贴边模式没能应用，请再选一次。");
+    }
+  }
+}
+
+async function changeDockSide(value) {
+  const next = value || "off";
+  dockSide.value = next;
+  showDockSettings.value = next === "off";
+  try {
+    await api.setDockPref(next, dockWidth.value, dockOnTop.value);
+    await applyDockLayout(next, dockWidth.value, dockOnTop.value);
+    if (next === "off") {
+      Toast.success("已恢复常规窗口");
+    } else {
+      Toast.success(next === "left" ? "已贴在屏幕左侧" : "已贴在屏幕右侧");
+    }
+  } catch (err) {
+    Toast.warning(err.message || "切换窗口模式失败");
+  }
+}
+
+async function changeDockOnTop(event) {
+  dockOnTop.value = isChecked(event);
+  if (!isDocked.value) return;
+  try {
+    await api.setDockPref(dockSide.value, dockWidth.value, dockOnTop.value);
+    await applyDockLayout(dockSide.value, dockWidth.value, dockOnTop.value);
+  } catch (err) {
+    Toast.warning(err.message || "置顶设置失败");
   }
 }
 
@@ -365,15 +415,21 @@ async function start() {
 </script>
 
 <template>
-  <div ref="scroller" class="page">
+  <div ref="scroller" class="page" :class="{ 'page--dock': isDocked }">
     <div class="shell">
       <header class="brand">
         <img class="logo" src="/icon.png" alt="" />
         <div class="brand-copy">
           <h1>智慧树答题</h1>
-          <p>多份作业一次只显示一份，用分页切换。是否保存答案文件可以自己选。</p>
+          <p v-if="!isDocked">多份作业一次只显示一份，用分页切换。是否保存答案文件可以自己选。</p>
+          <p v-else class="dock-tagline">贴边模式：浏览器做题，这里看答案。点「设置」可改模型或重新获取。</p>
         </div>
-        <Button @click="helpOpen = true">帮助</Button>
+        <div class="brand-actions">
+          <Button v-if="isDocked" size="small" @click="showDockSettings = !showDockSettings">
+            {{ showDockSettings ? "收起设置" : "设置" }}
+          </Button>
+          <Button @click="helpOpen = true">帮助</Button>
+        </div>
       </header>
 
       <div v-if="updateInfo" class="update-bar">
@@ -382,7 +438,29 @@ async function start() {
         <Button size="small" @click="updateInfo = null">关闭</Button>
       </div>
 
-      <Card class="form-card" :bodyStyle="{ padding: '18px 18px 14px' }">
+      <Card class="form-card dock-card" :bodyStyle="{ padding: '18px 18px 14px' }">
+        <div class="field">
+          <div class="field-label">贴边做题</div>
+          <Select
+            :value="dockSide"
+            :optionList="dockModeOptions"
+            style="width: 100%"
+            @change="changeDockSide"
+          />
+          <div class="save-hint">
+            贴在左或右侧并可选置顶，方便浏览器做题时对照答案。不往网页里注入，和插件无关。
+          </div>
+        </div>
+        <div v-if="isDocked" class="save-row dock-top-row">
+          <div>
+            <div class="field-label">窗口置顶</div>
+            <div class="save-hint">关闭后仍贴边，但可能被其他窗口挡住。</div>
+          </div>
+          <Switch :checked="dockOnTop" @change="changeDockOnTop" />
+        </div>
+      </Card>
+
+      <Card v-show="!isDocked || showDockSettings" class="form-card" :bodyStyle="{ padding: '18px 18px 14px' }">
         <div class="field">
           <div class="field-label">作业页地址</div>
           <TextArea
@@ -446,7 +524,7 @@ async function start() {
         <div class="status">{{ status }}</div>
       </Card>
 
-      <Card class="form-card" :bodyStyle="{ padding: '18px 18px 14px' }">
+      <Card v-show="!isDocked || showDockSettings" class="form-card" :bodyStyle="{ padding: '18px 18px 14px' }">
         <div class="save-row">
           <div>
             <div class="field-label">保存到答案文件夹</div>
@@ -581,6 +659,8 @@ async function start() {
           <li>一次只显示一份作业，用分页切换到下一份。选择题会把正确选项标成绿色。填空题按网页上的空分成多行，每行有「复制」。</li>
           <li>打开「保存到答案文件夹」后，每份答案写成一个 txt。关掉后只在窗口里显示，不写文件。已有文件可以勾选删除，或点「删除全部答案」清掉整个文件夹。点「复制本份」只复制这一份。提交前自己核对一遍。</li>
         </ol>
+        <h2>贴边做题</h2>
+        <p>在「贴边做题」里选贴在屏幕左侧或右侧。窗口会收成窄栏并占满工作区高度，可选「窗口置顶」以免被挡住。贴边时默认只显示题目答案，点「设置」可展开模型与获取答案。下次打开会记住上次模式。切屏是否被平台记录与贴边无关，见 README 说明。</p>
         <div class="help-close">
           <Button theme="solid" type="primary" @click="helpOpen = false">知道了</Button>
         </div>

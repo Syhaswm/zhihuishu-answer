@@ -137,6 +137,14 @@ class Api:
         current_key = keys.get(provider["id"]) or ""
         if provider["id"] == "deepseek" and not current_key:
             current_key = api_key
+        dock_side = str(pref.get("dockSide") or "off").lower()
+        if dock_side not in ("off", "left", "right"):
+            dock_side = "off"
+        try:
+            dock_width = int(pref.get("dockWidth") or 380)
+        except (TypeError, ValueError):
+            dock_width = 380
+        dock_width = min(560, max(300, dock_width))
         return {
             "apiKey": current_key,
             "keys": keys,
@@ -147,8 +155,32 @@ class Api:
             "model": saved_model or provider["model"],
             "baseUrl": pref.get("baseUrl") or provider["url"],
             "thinking": bool(pref.get("thinking", False)),
+            "dockSide": dock_side,
+            "dockWidth": dock_width,
+            "dockOnTop": bool(pref.get("dockOnTop", True)),
             "providers": answer.PROVIDERS,
             "files": self._answer_files(),
+        }
+
+    def set_dock_pref(self, side, width=380, always_on_top=True):
+        side = str(side or "off").lower()
+        if side not in ("off", "left", "right"):
+            side = "off"
+        try:
+            width = int(width)
+        except (TypeError, ValueError):
+            width = 380
+        width = min(560, max(300, width))
+        data = self._read_pref()
+        data["dockSide"] = side
+        data["dockWidth"] = width
+        data["dockOnTop"] = bool(always_on_top)
+        self._pref_path().write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        return {
+            "ok": True,
+            "dockSide": side,
+            "dockWidth": width,
+            "dockOnTop": bool(always_on_top),
         }
 
     def set_save_answers(self, enabled):

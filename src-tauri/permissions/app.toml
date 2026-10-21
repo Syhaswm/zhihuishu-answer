@@ -7,3 +7,8 @@ commands.allow = ["api_token"]
 identifier = "allow-app-version"
 description = "读取当前软件版本"
 commands.allow = ["app_version"]
+
+[[permission]]
+identifier = "allow-dock-window"
+description = "贴边做题模式调整窗口"
+commands.allow = ["dock_apply", "dock_restore"]

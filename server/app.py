@@ -85,6 +85,12 @@ class SaveIn(BaseModel):
     enabled: bool
 
 
+class DockIn(BaseModel):
+    side: str = "off"
+    width: int = 380
+    alwaysOnTop: bool = True
+
+
 class NamesIn(BaseModel):
     names: list[str] = []
 
@@ -143,6 +149,11 @@ def settings():
 @app.post("/api/settings/save")
 def set_save(body: SaveIn):
     return api.set_save_answers(body.enabled)
+
+
+@app.post("/api/settings/dock")
+def set_dock(body: DockIn):
+    return api.set_dock_pref(body.side, body.width, body.alwaysOnTop)
 
 
 @app.get("/api/answers")

@@ -96,6 +96,14 @@ export function setSaveAnswers(enabled) {
   });
 }
 
+export function setDockPref(side, width, alwaysOnTop) {
+  return request("/api/settings/dock", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ side, width, alwaysOnTop }),
+  });
+}
+
 export function listAnswers() {
   return request("/api/answers");
 }

@@ -55,6 +55,61 @@ body {
   font-size: 13px;
 }
 
+.brand-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.dock-tagline {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.dock-card {
+  margin-bottom: 12px;
+}
+
+.dock-top-row {
+  margin-top: 12px;
+}
+
+.page--dock {
+  padding: 12px 10px 20px;
+}
+
+.page--dock .shell {
+  max-width: none;
+}
+
+.page--dock .brand h1 {
+  font-size: 18px;
+}
+
+.page--dock .logo {
+  width: 34px;
+  height: 34px;
+}
+
+.page--dock .q-head {
+  flex-wrap: wrap;
+}
+
+.page--dock .stem {
+  font-size: 13px;
+}
+
+.page--dock .option {
+  font-size: 13px;
+}
+
+.page--dock .paper-head {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
 .model-row {
   display: flex;
   gap: 8px;
