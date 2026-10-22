@@ -121,7 +121,7 @@ def assemble():
         shutil.rmtree(PORTABLE)
     PORTABLE.mkdir(parents=True)
     shutil.copytree(RUNTIME, PORTABLE / "runtime")
-    for name in ("answer.py", "desktop.py", "LICENSE", "README.md", "使用说明.md", "app.ico"):
+    for name in ("answer.py", "usage_query.py", "desktop.py", "LICENSE", "README.md", "使用说明.md", "app.ico"):
         shutil.copy2(ROOT / name, PORTABLE / name)
     server = PORTABLE / "server"
     server.mkdir()

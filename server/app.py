@@ -22,6 +22,7 @@ if str(ROOT) not in sys.path:
 
 import answer
 import desktop
+import usage_query
 
 app = FastAPI(title="智慧树答题", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -189,6 +190,15 @@ def model_list(body: ModelsIn):
 def test_model(body: ModelsIn):
     try:
         result = answer.probe_connection(body.provider, body.model, body.baseUrl, body.apiKey)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, **result}
+
+
+@app.post("/api/usage")
+def model_usage(body: ModelsIn):
+    try:
+        result = usage_query.query_usage(body.provider, body.baseUrl, body.apiKey)
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
     return {"ok": True, **result}

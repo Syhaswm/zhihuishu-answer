@@ -76,6 +76,14 @@ export function testModel(provider, baseUrl, apiKey, model) {
   });
 }
 
+export function queryUsage(provider, baseUrl, apiKey) {
+  return request("/api/usage", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider, baseUrl, apiKey, model: "" }),
+  });
+}
+
 export function checkUpdate(current) {
   return request("/api/update", {
     method: "POST",

@@ -12,9 +12,14 @@ const modelName = ref("deepseek-flash");
 const modelOptions = ref([]);
 const loadingModels = ref(false);
 const testingLink = ref(false);
+const loadingUsage = ref(false);
 const modelHint = ref("");
 const connectHint = ref("");
 const connectOk = ref(false);
+const usageRows = ref([]);
+const usageNote = ref("");
+const usageConsole = ref("");
+const usageSupported = ref(false);
 const thinking = ref(false);
 const baseUrl = ref("https://api.deepseek.com/chat/completions");
 const providers = ref([
@@ -199,6 +204,10 @@ function chooseProvider(value) {
   modelOptions.value = [];
   modelHint.value = "";
   connectHint.value = "";
+  usageRows.value = [];
+  usageNote.value = "";
+  usageConsole.value = "";
+  usageSupported.value = false;
   apiKey.value = providerKeys.value[value] || "";
   const found = providers.value.find((item) => item.id === value);
   if (!found) return;
@@ -230,6 +239,47 @@ async function fetchModels() {
     Toast.warning(message);
   } finally {
     loadingModels.value = false;
+  }
+}
+
+async function openUsageConsole() {
+  if (!usageConsole.value) return;
+  try {
+    await api.openUrl(usageConsole.value);
+  } catch (err) {
+    window.open(usageConsole.value, "_blank");
+  }
+}
+
+async function fetchUsage() {
+  usageRows.value = [];
+  usageNote.value = "";
+  usageConsole.value = "";
+  usageSupported.value = false;
+  const found = currentProvider.value;
+  if (found && found.needsKey && !String(apiKey.value || "").trim()) {
+    usageNote.value = `请先填写${found.name}的 API Key，再查询用量。`;
+    Toast.warning(usageNote.value);
+    return;
+  }
+  loadingUsage.value = true;
+  try {
+    const data = await api.queryUsage(provider.value, baseUrl.value, apiKey.value);
+    if (!data.ok) throw new Error(data.error || "查询失败");
+    usageRows.value = data.rows || [];
+    usageNote.value = data.note || "";
+    usageConsole.value = data.consoleUrl || "";
+    usageSupported.value = !!data.supported;
+    if (data.supported && usageRows.value.length) {
+      Toast.success("用量已更新");
+    } else if (usageNote.value) {
+      Toast.info(usageNote.value);
+    }
+  } catch (err) {
+    usageNote.value = err.message || String(err);
+    Toast.warning(usageNote.value);
+  } finally {
+    loadingUsage.value = false;
   }
 }
 
@@ -511,8 +561,25 @@ async function start() {
           />
           <div class="model-row" style="margin-top: 8px">
             <Button :loading="testingLink" @click="testConnection">测试连接</Button>
+            <Button :loading="loadingUsage" @click="fetchUsage">查询用量</Button>
           </div>
           <div v-if="connectHint" class="model-hint" :class="{ 'is-ok': connectOk }">{{ connectHint }}</div>
+          <div v-if="usageRows.length || usageNote" class="usage-panel">
+            <div class="usage-head">
+              <span class="field-label">用量 / 余额</span>
+              <Button v-if="usageConsole" size="small" theme="borderless" type="primary" @click="openUsageConsole">
+                打开控制台
+              </Button>
+            </div>
+            <div v-for="(item, index) in usageRows" :key="index" class="usage-row">
+              <span class="usage-label">{{ item.label }}</span>
+              <span class="usage-value">{{ item.value }}</span>
+              <span v-if="item.hint" class="usage-hint">{{ item.hint }}</span>
+            </div>
+            <div v-if="usageNote" class="model-hint" :class="{ 'is-ok': usageSupported && usageRows.length }">
+              {{ usageNote }}
+            </div>
+          </div>
         </div>
         <div class="account">{{ accountName ? "当前账号：" + accountName : "当前账号：未登录" }}</div>
         <div class="actions">
@@ -651,6 +718,8 @@ async function start() {
         </ol>
         <h2>换成其他模型</h2>
         <p>模型可以换成通义千问、智谱、Kimi、豆包、OpenAI、Gemini，也可以用本机的 Ollama 或 LM Studio。这些接口都按同一种对话格式调用。本地模型要先在自己电脑上启动。没有列出的服务，选「自定义接口」，填它的地址和模型名。</p>
+        <h2>查询用量</h2>
+        <p>填好 API Key 后点「查询用量」，会按当前选的厂商查询余额或套餐额度（和 CC Switch 一样，界面统一、各家接口不同）。DeepSeek、通义、智谱、Kimi 等支持 API 查询；OpenAI、Gemini、豆包等若官方不提供 Key 余额接口，会提示到控制台查看。本地 Ollama / LM Studio 只显示本机状态。</p>
         <h2>怎么使用</h2>
         <ol>
           <li>点「登录账号」，在弹出的窗口登录正在做这份作业的智慧树账号。登录会保存，界面上能看到当前账号。要换人时再点「切换账号」。</li>
