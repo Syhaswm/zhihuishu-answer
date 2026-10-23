@@ -847,6 +847,65 @@ def _apply_thinking(payload, provider_id, model, endpoint, enabled):
         payload["thinking"] = {"type": "enabled" if enabled else "disabled"}
 
 
+def empty_usage():
+    return {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "reasoning_tokens": 0,
+        "requests": 0,
+    }
+
+
+def normalize_usage(data):
+    usage = data.get("usage") if isinstance(data, dict) else None
+    if not isinstance(usage, dict):
+        return {}
+    prompt = usage.get("prompt_tokens") or usage.get("input_tokens") or 0
+    completion = usage.get("completion_tokens") or usage.get("output_tokens") or 0
+    total = usage.get("total_tokens") or 0
+    if not total and (prompt or completion):
+        total = int(prompt or 0) + int(completion or 0)
+    reasoning = 0
+    for details in (usage.get("completion_tokens_details"), usage.get("output_tokens_details")):
+        if isinstance(details, dict) and details.get("reasoning_tokens"):
+            reasoning = int(details.get("reasoning_tokens") or 0)
+            break
+    return {
+        "prompt_tokens": int(prompt or 0),
+        "completion_tokens": int(completion or 0),
+        "total_tokens": int(total or 0),
+        "reasoning_tokens": reasoning,
+    }
+
+
+def merge_usage(acc, part):
+    acc = acc if isinstance(acc, dict) else empty_usage()
+    acc["requests"] = int(acc.get("requests") or 0) + 1
+    part = part if isinstance(part, dict) else {}
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens", "reasoning_tokens"):
+        acc[key] = int(acc.get(key) or 0) + int(part.get(key) or 0)
+    return acc
+
+
+def format_session_usage(usage):
+    usage = usage if isinstance(usage, dict) else {}
+    requests = int(usage.get("requests") or 0)
+    if not requests:
+        return ""
+    prompt = int(usage.get("prompt_tokens") or 0)
+    completion = int(usage.get("completion_tokens") or 0)
+    total = int(usage.get("total_tokens") or 0)
+    reasoning = int(usage.get("reasoning_tokens") or 0)
+    if total or prompt or completion:
+        text = f"本次消耗：输入 {prompt} · 输出 {completion} · 合计 {total} tokens"
+        if reasoning:
+            text += f"（思考 {reasoning}）"
+        text += f"，共 {requests} 次 API 请求"
+        return text
+    return f"本次共 {requests} 次 API 请求，接口未返回 token 用量"
+
+
 def ask_chunk(api_key, questions, endpoint=None, model=None, provider_name="DeepSeek", provider_id="", thinking=False):
     endpoint = endpoint or API_BASE
     model = model or MODEL
@@ -894,7 +953,7 @@ def ask_chunk(api_key, questions, endpoint=None, model=None, provider_name="Deep
     parsed = parse_model_json(content)
     answers = parsed.get("answers") if isinstance(parsed, dict) else None
     if not isinstance(answers, list):
-        return []
+        return {"answers": [], "usage": normalize_usage(data)}
     cleaned = []
     for item in answers:
         if not isinstance(item, dict):
@@ -906,7 +965,7 @@ def ask_chunk(api_key, questions, endpoint=None, model=None, provider_name="Deep
                 "reason": item.get("reason") or "",
             }
         )
-    return cleaned
+    return {"answers": cleaned, "usage": normalize_usage(data)}
 
 
 def answer_list(raw):
@@ -991,11 +1050,17 @@ def apply_answers(exam, found):
 
 def collect_answers(api_key, jobs, on_progress=None):
     found = {}
+    usage = empty_usage()
     if not jobs:
-        return found
+        return found, usage
     workers = min(PARALLEL, len(jobs))
 
-    def remember(chunk, items):
+    def remember(chunk, payload):
+        if isinstance(payload, dict):
+            items = payload.get("answers") or []
+            merge_usage(usage, payload.get("usage"))
+        else:
+            items = payload or []
         for item in items:
             found.setdefault(item["n"], item)
         if on_progress:
@@ -1007,7 +1072,7 @@ def collect_answers(api_key, jobs, on_progress=None):
             if on_progress:
                 on_progress(f"正在解答第 {chunk[0]['n']}-{chunk[-1]['n']} 题…")
             remember(chunk, ask_chunk(api_key, chunk))
-            return found
+            return found, usage
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {}
             for chunk in jobs:
@@ -1016,13 +1081,14 @@ def collect_answers(api_key, jobs, on_progress=None):
                 futures[pool.submit(ask_chunk, api_key, chunk)] = chunk
             for future in as_completed(futures):
                 remember(futures[future], future.result())
-    return found
+    return found, usage
 
 
 def solve(exam, api_key=None, on_progress=None):
     api_key = str(api_key or "").strip() or load_api_key()
-    found = collect_answers(api_key, list(question_chunks(exam["questions"])), on_progress=on_progress)
-    return apply_answers(exam, found)
+    found, usage = collect_answers(api_key, list(question_chunks(exam["questions"])), on_progress=on_progress)
+    apply_answers(exam, found)
+    return usage
 
 
 def fetch_homework(url, cookie=None):

@@ -632,6 +632,7 @@ class Api:
                 jobs.append((index, chunk))
         found = {index: {} for index in range(total)}
         chunk_errors = {}
+        session_usage = answer.empty_usage()
         if jobs:
             self._progress(f"正在同时解答 {len(jobs)} 组题目…")
             done = 0
@@ -656,7 +657,13 @@ class Api:
                         index, chunk = futures[future]
                         done += 1
                         try:
-                            for item in future.result():
+                            payload = future.result()
+                            if isinstance(payload, dict):
+                                batch = payload.get("answers") or []
+                                answer.merge_usage(session_usage, payload.get("usage"))
+                            else:
+                                batch = payload or []
+                            for item in batch:
                                 found[index][item["n"]] = item
                         except Exception as exc:
                             chunk_errors.setdefault(index, exc)
@@ -685,8 +692,16 @@ class Api:
             summary = f"完成 {done} 份，{failed} 份没有取到。成功的答案分别保存在「答案」文件夹。"
         else:
             summary = f"完成 {done} 份。每份答案单独保存在「答案」文件夹。"
-        self._progress(summary)
-        return {"ok": done > 0, "error": "" if done else summary, "papers": papers, "summary": summary}
+        usage_text = answer.format_session_usage(session_usage)
+        self._progress(summary if not usage_text else f"{summary}\n{usage_text}")
+        return {
+            "ok": done > 0,
+            "error": "" if done else summary,
+            "papers": papers,
+            "summary": summary,
+            "usage": session_usage,
+            "usageText": usage_text,
+        }
 
 
 def _serve(directory):

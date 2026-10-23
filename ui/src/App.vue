@@ -20,6 +20,7 @@ const usageRows = ref([]);
 const usageNote = ref("");
 const usageConsole = ref("");
 const usageSupported = ref(false);
+const sessionUsageText = ref("");
 const thinking = ref(false);
 const baseUrl = ref("https://api.deepseek.com/chat/completions");
 const providers = ref([
@@ -430,6 +431,7 @@ function paperTitle(paper) {
 async function start() {
   error.value = "";
   papers.value = [];
+  sessionUsageText.value = "";
   if (!url.value.trim()) {
     error.value = "请输入作业页地址，每行一个。";
     return;
@@ -451,6 +453,7 @@ async function start() {
     if (!resp) throw new Error("没有返回结果");
     papers.value = resp.papers || [];
     page.value = 1;
+    sessionUsageText.value = resp.usageText || "";
     status.value = resp.summary || "";
     await refreshFiles();
     if (!resp.ok && !papers.value.length) {
@@ -589,6 +592,7 @@ async function start() {
           <Button theme="solid" type="primary" :loading="loading" :disabled="loggingIn" @click="start">获取答案</Button>
         </div>
         <div class="status">{{ status }}</div>
+        <div v-if="sessionUsageText" class="usage-session">{{ sessionUsageText }}</div>
       </Card>
 
       <Card v-show="!isDocked || showDockSettings" class="form-card" :bodyStyle="{ padding: '18px 18px 14px' }">

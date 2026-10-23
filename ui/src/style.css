@@ -173,6 +173,16 @@ body {
   font-size: 12px;
 }
 
+.usage-session {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--semi-color-primary-light-default, #eaf2ff);
+  color: var(--semi-color-primary, #0064fa);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .thinking-row {
   margin-top: 12px;
 }
