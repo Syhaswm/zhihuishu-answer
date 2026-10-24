@@ -207,21 +207,35 @@ def model_usage(body: ModelsIn):
 @app.post("/api/update")
 def check_update(body: UpdateIn):
     current = str(body.current or "").strip()
+
+    def failed(message):
+        return {
+            "update": False,
+            "current": current,
+            "checkOk": False,
+            "checkMessage": message,
+        }
+
     try:
         response = answer.session().get(
             "https://gitee.com/api/v5/repos/Syhaswm/zhihuishu-answer/releases",
             params={"page": 1, "per_page": 20, "direction": "desc"},
             timeout=8,
         )
-        releases = response.json()
     except Exception:
-        return {"update": False, "current": current}
+        return failed("暂时无法连接更新服务器，请检查网络。可稍后点「重试」，或到 Gitee 发行版页手动查看。")
+    try:
+        releases = response.json()
+    except ValueError:
+        return failed("更新服务器返回异常，请稍后再试。")
+    if not response.ok:
+        return failed(f"检查更新失败（HTTP {response.status_code}），请稍后再试。")
     if not isinstance(releases, list) or not releases:
-        return {"update": False, "current": current}
+        return failed("没有读取到发行版信息，请稍后再试。")
     payload = max(releases, key=lambda item: _version_key(item.get("tag_name")))
     latest = str(payload.get("tag_name") or "").lstrip("vV")
     if not latest or _version_key(latest) <= _version_key(current):
-        return {"update": False, "current": current, "latest": latest}
+        return {"update": False, "current": current, "latest": latest, "checkOk": True}
     download = ""
     for asset in payload.get("assets") or []:
         name = str(asset.get("name") or "")
@@ -230,7 +244,13 @@ def check_update(body: UpdateIn):
             break
     if not download:
         download = f"https://gitee.com/Syhaswm/zhihuishu-answer/releases/tag/v{latest}"
-    return {"update": True, "current": current, "latest": latest, "url": download}
+    return {
+        "update": True,
+        "current": current,
+        "latest": latest,
+        "url": download,
+        "checkOk": True,
+    }
 
 
 @app.post("/api/login")

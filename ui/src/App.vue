@@ -42,6 +42,8 @@ const page = ref(1);
 const paperAnchor = ref(null);
 const helpOpen = ref(false);
 const updateInfo = ref(null);
+const updateCheckFailed = ref("");
+const checkingUpdate = ref(false);
 const keyPage = "https://platform.deepseek.com/api_keys";
 const dockSide = ref("off");
 const dockWidth = ref(DOCK_WIDTH_DEFAULT);
@@ -325,15 +327,52 @@ async function downloadUpdate() {
   }
 }
 
+function applyUpdateCheck(info) {
+  if (!info) return;
+  if (info.update) {
+    updateInfo.value = info;
+    updateCheckFailed.value = "";
+    return;
+  }
+  updateInfo.value = null;
+  if (info.checkOk === false && info.checkMessage) {
+    updateCheckFailed.value = info.checkMessage;
+  } else {
+    updateCheckFailed.value = "";
+  }
+}
+
+async function retryUpdateCheck() {
+  checkingUpdate.value = true;
+  updateCheckFailed.value = "";
+  try {
+    const current = await api.appVersion();
+    const info = await api.checkUpdate(current);
+    applyUpdateCheck(info);
+    if (info && info.update) {
+      Toast.success(`发现新版本 ${info.latest}`);
+    } else if (info && info.checkOk === false) {
+      Toast.warning(info.checkMessage || "检查更新失败");
+    } else {
+      Toast.success("当前已是最新版本");
+    }
+  } catch (err) {
+    updateCheckFailed.value = "检查更新失败，请确认本机答题服务正常。";
+    Toast.warning(updateCheckFailed.value);
+  } finally {
+    checkingUpdate.value = false;
+  }
+}
+
 onMounted(() => {
   loadSettings();
   api
     .appVersion()
     .then((current) => api.checkUpdate(current))
-    .then((info) => {
-      if (info && info.update) updateInfo.value = info;
-    })
-    .catch(() => {});
+    .then((info) => applyUpdateCheck(info))
+    .catch(() => {
+      updateCheckFailed.value = "检查更新失败，请确认本机答题服务正常。";
+    });
 });
 
 function displayParts(question) {
@@ -489,6 +528,11 @@ async function start() {
         <span>发现新版本 {{ updateInfo.latest }}，当前是 {{ updateInfo.current }}。</span>
         <Button size="small" theme="solid" type="primary" @click="downloadUpdate">下载更新</Button>
         <Button size="small" @click="updateInfo = null">关闭</Button>
+      </div>
+      <div v-if="updateCheckFailed" class="update-bar update-bar--warn">
+        <span>{{ updateCheckFailed }}</span>
+        <Button size="small" :loading="checkingUpdate" @click="retryUpdateCheck">重试</Button>
+        <Button size="small" @click="updateCheckFailed = ''">关闭</Button>
       </div>
 
       <Card class="form-card dock-card" :bodyStyle="{ padding: '18px 18px 14px' }">

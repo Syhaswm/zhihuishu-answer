@@ -189,6 +189,7 @@ body {
 
 .update-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   margin: -6px 0 16px;
@@ -197,6 +198,12 @@ body {
   background: #e8f3ff;
   color: #1c4c8c;
   font-size: 13px;
+  line-height: 1.45;
+}
+
+.update-bar--warn {
+  background: #fff7e6;
+  color: #ad6800;
 }
 
 .help h2 {
