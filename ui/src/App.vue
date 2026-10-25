@@ -44,6 +44,7 @@ const helpOpen = ref(false);
 const updateInfo = ref(null);
 const updateCheckFailed = ref("");
 const checkingUpdate = ref(false);
+const appVersionText = ref("");
 const keyPage = "https://platform.deepseek.com/api_keys";
 const dockSide = ref("off");
 const dockWidth = ref(DOCK_WIDTH_DEFAULT);
@@ -342,34 +343,51 @@ function applyUpdateCheck(info) {
   }
 }
 
-async function retryUpdateCheck() {
+async function runUpdateCheck(options = {}) {
+  const toast = options.toast === true;
+  const clearFailed = options.clearFailed !== false;
+  if (checkingUpdate.value) return;
   checkingUpdate.value = true;
-  updateCheckFailed.value = "";
+  if (clearFailed) updateCheckFailed.value = "";
   try {
-    const current = await api.appVersion();
-    const info = await api.checkUpdate(current);
+    if (!appVersionText.value) {
+      appVersionText.value = await api.appVersion();
+    }
+    const info = await api.checkUpdate(appVersionText.value);
     applyUpdateCheck(info);
-    if (info && info.update) {
-      Toast.success(`发现新版本 ${info.latest}`);
-    } else if (info && info.checkOk === false) {
-      Toast.warning(info.checkMessage || "检查更新失败");
-    } else {
-      Toast.success("当前已是最新版本");
+    if (toast) {
+      if (info && info.update) {
+        Toast.success(`发现新版本 ${info.latest}`);
+      } else if (info && info.checkOk === false) {
+        Toast.warning(info.checkMessage || "检查更新失败");
+      } else {
+        Toast.success(`当前已是最新版本（v${appVersionText.value}）`);
+      }
     }
   } catch (err) {
     updateCheckFailed.value = "检查更新失败，请确认本机答题服务正常。";
-    Toast.warning(updateCheckFailed.value);
+    if (toast) Toast.warning(updateCheckFailed.value);
   } finally {
     checkingUpdate.value = false;
   }
+}
+
+function manualUpdateCheck() {
+  runUpdateCheck({ toast: true, clearFailed: true });
+}
+
+function retryUpdateCheck() {
+  runUpdateCheck({ toast: true, clearFailed: true });
 }
 
 onMounted(() => {
   loadSettings();
   api
     .appVersion()
-    .then((current) => api.checkUpdate(current))
-    .then((info) => applyUpdateCheck(info))
+    .then((current) => {
+      appVersionText.value = current || "";
+      return runUpdateCheck({ toast: false, clearFailed: true });
+    })
     .catch(() => {
       updateCheckFailed.value = "检查更新失败，请确认本机答题服务正常。";
     });
@@ -512,7 +530,10 @@ async function start() {
       <header class="brand">
         <img class="logo" src="/icon.png" alt="" />
         <div class="brand-copy">
-          <h1>智慧树答题</h1>
+          <div class="brand-title-row">
+            <h1>智慧树答题</h1>
+            <span v-if="appVersionText" class="app-version">v{{ appVersionText }}</span>
+          </div>
           <p v-if="!isDocked">多份作业一次只显示一份，用分页切换。是否保存答案文件可以自己选。</p>
           <p v-else class="dock-tagline">贴边模式：浏览器做题，这里看答案。点「设置」可改模型或重新获取。</p>
         </div>
@@ -520,6 +541,7 @@ async function start() {
           <Button v-if="isDocked" size="small" @click="showDockSettings = !showDockSettings">
             {{ showDockSettings ? "收起设置" : "设置" }}
           </Button>
+          <Button size="small" :loading="checkingUpdate" @click="manualUpdateCheck">检查更新</Button>
           <Button @click="helpOpen = true">帮助</Button>
         </div>
       </header>
@@ -778,6 +800,8 @@ async function start() {
         </ol>
         <h2>贴边做题</h2>
         <p>在「贴边做题」里选贴在屏幕左侧或右侧。窗口会收成窄栏并占满工作区高度，可选「窗口置顶」以免被挡住。贴边时默认只显示题目答案，点「设置」可展开模型与获取答案。下次打开会记住上次模式。切屏是否被平台记录与贴边无关，见 README 说明。</p>
+        <h2>检查更新</h2>
+        <p>标题旁会显示当前版本号（如 v1.7.6）。打开软件时会自动检查 Gitee 是否有新版本；也可随时点右上角「检查更新」。若网络异常，顶部会出现橙色提示，可点「重试」。</p>
         <div class="help-close">
           <Button theme="solid" type="primary" @click="helpOpen = false">知道了</Button>
         </div>
