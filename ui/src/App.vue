@@ -1,8 +1,9 @@
 <script setup>
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { BackTop, Banner, Button, Card, Checkbox, Input, Modal, Pagination, Select, Switch, Tag, TextArea, Toast } from "@kousum/semi-ui-vue";
 import * as api from "./api";
 import { applyDockLayout, DOCK_WIDTH_DEFAULT } from "./dock";
+import { registerCopyHotkey, unregisterCopyHotkey, writeClipboard } from "./hotkey";
 
 const url = ref("");
 const apiKey = ref("");
@@ -45,6 +46,9 @@ const updateInfo = ref(null);
 const updateCheckFailed = ref("");
 const checkingUpdate = ref(false);
 const appVersionText = ref("");
+const selectedQuestionN = ref(null);
+const selectedPartIndex = ref(0);
+const hotkeyHint = "Ctrl+Shift+C";
 const keyPage = "https://platform.deepseek.com/api_keys";
 const dockSide = ref("off");
 const dockWidth = ref(DOCK_WIDTH_DEFAULT);
@@ -76,7 +80,58 @@ function showPage(next) {
   const total = papers.value.length;
   const value = Math.min(Math.max(Number(next) || 1, 1), total || 1);
   page.value = value;
+  selectedQuestionN.value = null;
+  selectedPartIndex.value = 0;
   paperAnchor.value?.scrollIntoView({ block: "start" });
+}
+
+function selectQuestion(question, partIndex = 0) {
+  if (!question) return;
+  selectedQuestionN.value = question.n;
+  selectedPartIndex.value = partIndex;
+}
+
+function isQuestionSelected(question) {
+  return selectedQuestionN.value === question.n;
+}
+
+function hotkeyCopyPayload() {
+  const paper = currentPaper.value;
+  if (!paper?.ok || !paper.questions?.length) return null;
+  let question = paper.questions.find((item) => item.n === selectedQuestionN.value);
+  if (!question) question = paper.questions[0];
+  if (!question) return null;
+  const parts = displayParts(question);
+  if (question.options?.length) {
+    const text = answerParts(question).join("、") || String(question.answer || "");
+    return { text, hint: `第 ${question.n} 题` };
+  }
+  const index = Math.min(Math.max(selectedPartIndex.value, 0), parts.length - 1);
+  const part = parts[index] || parts[0];
+  const label = part?.label ? String(part.label).trim() : "";
+  return {
+    text: part?.text || "",
+    hint: label ? `第 ${question.n} 题 ${label}` : `第 ${question.n} 题`,
+  };
+}
+
+async function copyHotkeyAnswer() {
+  const payload = hotkeyCopyPayload();
+  if (!payload) {
+    Toast.warning("还没有可复制的答案，请先获取答案。");
+    return;
+  }
+  const text = String(payload.text || "").trim();
+  if (!text) {
+    Toast.warning("当前选中没有答案，请点选另一题或某一空。");
+    return;
+  }
+  const ok = await writeClipboard(text);
+  if (ok) {
+    Toast.success(`已复制（${payload.hint}）`);
+  } else {
+    error.value = "复制失败，请手动选择这段答案";
+  }
 }
 
 function answerParts(question) {
@@ -391,6 +446,11 @@ onMounted(() => {
     .catch(() => {
       updateCheckFailed.value = "检查更新失败，请确认本机答题服务正常。";
     });
+  registerCopyHotkey(() => copyHotkeyAnswer()).catch(() => {});
+});
+
+onUnmounted(() => {
+  unregisterCopyHotkey().catch(() => {});
 });
 
 function displayParts(question) {
@@ -510,6 +570,8 @@ async function start() {
     if (!resp) throw new Error("没有返回结果");
     papers.value = resp.papers || [];
     page.value = 1;
+    selectedQuestionN.value = null;
+    selectedPartIndex.value = 0;
     sessionUsageText.value = resp.usageText || "";
     status.value = resp.summary || "";
     await refreshFiles();
@@ -567,7 +629,8 @@ async function start() {
             @change="changeDockSide"
           />
           <div class="save-hint">
-            贴在左或右侧并可选置顶，方便浏览器做题时对照答案。不往网页里注入，和插件无关。
+            贴在左或右侧并可选置顶，方便浏览器做题时对照答案。在软件里点一下题目或某一空，按
+            {{ hotkeyHint }} 可复制到剪贴板，浏览器可保持焦点。
           </div>
         </div>
         <div v-if="isDocked" class="save-row dock-top-row">
@@ -718,7 +781,10 @@ async function start() {
           <Card
             v-for="question in currentPaper.questions"
             :key="`${page}-${question.n}`"
+            class="q-card"
+            :class="{ 'q-card--selected': isQuestionSelected(question) }"
             :bodyStyle="{ padding: '14px 16px' }"
+            @click="selectQuestion(question, 0)"
           >
             <div class="q-head">
               <span class="q-no">{{ question.n }}.</span>
@@ -737,7 +803,13 @@ async function start() {
                 {{ option }}
               </div>
             </div>
-            <div v-for="(part, index) in displayParts(question)" :key="index" class="answer">
+            <div
+              v-for="(part, index) in displayParts(question)"
+              :key="index"
+              class="answer"
+              :class="{ 'answer--selected': isQuestionSelected(question) && selectedPartIndex === index }"
+              @click.stop="selectQuestion(question, index)"
+            >
               <span class="answer-text">
                 <template v-if="part.label">{{ part.label }} </template>
                 <template v-else>答案：</template>
@@ -802,6 +874,12 @@ async function start() {
         <p>在「贴边做题」里选贴在屏幕左侧或右侧。窗口会收成窄栏并占满工作区高度，可选「窗口置顶」以免被挡住。贴边时默认只显示题目答案，点「设置」可展开模型与获取答案。下次打开会记住上次模式。切屏是否被平台记录与贴边无关，见 README 说明。</p>
         <h2>检查更新</h2>
         <p>标题旁会显示当前版本号（如 v1.7.6）。打开软件时会自动检查 Gitee 是否有新版本；也可随时点右上角「检查更新」。若网络异常，顶部会出现橙色提示，可点「重试」。</p>
+        <h2>快捷键复制（贴边做题）</h2>
+        <p>
+          获取答案后，在题目区域点一下某道题或某一空（会高亮）。焦点留在浏览器时，按
+          <strong>{{ hotkeyHint }}</strong>
+          可把当前选中答案写入剪贴板，再到作业页粘贴。选择题复制选项字母组合，填空题复制当前空。
+        </p>
         <div class="help-close">
           <Button theme="solid" type="primary" @click="helpOpen = false">知道了</Button>
         </div>

@@ -256,6 +256,8 @@ fn start_api(token: &str) -> Option<Child> {
 pub fn run() {
     let token = random_token();
     tauri::Builder::default()
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(AppSecrets {
             token: token.clone(),
             api: Mutex::new(start_api(&token)),

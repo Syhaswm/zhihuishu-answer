@@ -2,5 +2,12 @@
   "identifier": "default",
   "description": "主窗口",
   "windows": ["main"],
-  "permissions": ["core:default", "allow-api-token", "allow-app-version", "allow-dock-window"]
+  "permissions": [
+    "core:default",
+    "allow-api-token",
+    "allow-app-version",
+    "allow-dock-window",
+    "global-shortcut:default",
+    "clipboard-manager:default"
+  ]
 }

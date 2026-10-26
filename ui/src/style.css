@@ -127,6 +127,20 @@ body {
   gap: 8px;
 }
 
+.q-card {
+  cursor: pointer;
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.q-card--selected {
+  box-shadow: 0 0 0 2px var(--semi-color-primary, #0064fa);
+}
+
+.answer--selected {
+  outline: 2px solid var(--semi-color-primary, #0064fa);
+  outline-offset: 1px;
+}
+
 .model-row {
   display: flex;
   gap: 8px;
