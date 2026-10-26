@@ -1,12 +1,12 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "智慧树答题",
-  "version": "1.7.7",
+  "version": "1.7.8",
   "identifier": "com.zhihuishu.answer",
   "build": {
     "beforeDevCommand": "npm run dev --prefix ui",
     "devUrl": "http://127.0.0.1:1420",
-    "beforeBuildCommand": "npm run build --prefix ui",
+    "beforeBuildCommand": "npm install --include=dev --prefix ui && npm run build --prefix ui",
     "frontendDist": "../ui/dist"
   },
   "app": {

@@ -1,0 +1,1 @@
+import{Channel as i,invoke as e}from"./core-BUhCcD2K.js";async function o(r,a){const n=new i;return n.onmessage=a,await e("plugin:global-shortcut|register",{shortcuts:Array.isArray(r)?r:[r],handler:n})}async function g(r){return await e("plugin:global-shortcut|unregister",{shortcuts:Array.isArray(r)?r:[r]})}export{o as register,g as unregister};
