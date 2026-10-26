@@ -127,6 +127,48 @@ body {
   gap: 8px;
 }
 
+.dock-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  padding: 6px 0 8px;
+  margin-bottom: 4px;
+  background: var(--semi-color-bg-0, #fff);
+  border-bottom: 1px solid var(--semi-color-border, rgba(0, 0, 0, 0.08));
+}
+
+.dock-nav-select {
+  flex: 1;
+  min-width: 72px;
+}
+
+.dock-nav-pos {
+  font-size: 12px;
+  color: var(--semi-color-text-2, #666);
+  white-space: nowrap;
+}
+
+.dock-part-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.dock-list-toggle {
+  margin-bottom: 6px;
+}
+
+.page--dock .q-list {
+  margin-top: 0;
+}
+
 .q-card {
   cursor: pointer;
   transition: box-shadow 0.15s ease, border-color 0.15s ease;

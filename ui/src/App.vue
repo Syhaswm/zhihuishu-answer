@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { BackTop, Banner, Button, Card, Checkbox, Input, Modal, Pagination, Select, Switch, Tag, TextArea, Toast } from "@kousum/semi-ui-vue";
 import * as api from "./api";
 import { applyDockLayout, DOCK_WIDTH_DEFAULT } from "./dock";
@@ -54,6 +54,7 @@ const dockSide = ref("off");
 const dockWidth = ref(DOCK_WIDTH_DEFAULT);
 const dockOnTop = ref(true);
 const showDockSettings = ref(true);
+const dockShowAllQuestions = ref(false);
 const dockModeOptions = [
   { value: "off", label: "常规窗口" },
   { value: "left", label: "贴在屏幕左侧" },
@@ -76,12 +77,106 @@ const visibleFiles = computed(() =>
 );
 const isDocked = computed(() => dockSide.value === "left" || dockSide.value === "right");
 
+const dockQuestions = computed(() => {
+  const paper = currentPaper.value;
+  if (!paper?.ok || !Array.isArray(paper.questions)) return [];
+  return paper.questions;
+});
+
+const dockQuestionIndex = computed(() => {
+  const qs = dockQuestions.value;
+  if (!qs.length) return -1;
+  const idx = qs.findIndex((item) => item.n === selectedQuestionN.value);
+  return idx >= 0 ? idx : 0;
+});
+
+const dockFocusedQuestion = computed(() => {
+  const qs = dockQuestions.value;
+  if (!qs.length) return null;
+  const idx = Math.max(0, dockQuestionIndex.value);
+  return qs[idx] || null;
+});
+
+const dockQuestionOptions = computed(() =>
+  dockQuestions.value.map((item) => ({ value: item.n, label: `第 ${item.n} 题` }))
+);
+
+const dockFocusedParts = computed(() => {
+  const question = dockFocusedQuestion.value;
+  return question ? displayParts(question) : [];
+});
+
+const visibleQuestions = computed(() => {
+  const paper = currentPaper.value;
+  if (!paper?.ok || !paper.questions?.length) return [];
+  if (isDocked.value && !dockShowAllQuestions.value && dockFocusedQuestion.value) {
+    return [dockFocusedQuestion.value];
+  }
+  return paper.questions;
+});
+
+function ensureDockSelection() {
+  const qs = dockQuestions.value;
+  if (!qs.length) return;
+  if (selectedQuestionN.value == null || !qs.some((item) => item.n === selectedQuestionN.value)) {
+    selectQuestion(qs[0], 0);
+  }
+}
+
+function goPrevQuestion() {
+  const qs = dockQuestions.value;
+  const idx = dockQuestionIndex.value;
+  if (idx <= 0) {
+    Toast.info("已经是第一题");
+    return;
+  }
+  selectQuestion(qs[idx - 1], 0);
+}
+
+function goNextQuestion() {
+  const qs = dockQuestions.value;
+  const idx = dockQuestionIndex.value;
+  if (idx < 0 || idx >= qs.length - 1) {
+    Toast.info("已经是最后一题");
+    return;
+  }
+  selectQuestion(qs[idx + 1], 0);
+}
+
+function jumpDockQuestion(value) {
+  const n = Number(value);
+  const question = dockQuestions.value.find((item) => item.n === n);
+  if (question) selectQuestion(question, 0);
+}
+
+function goPrevPart() {
+  if (selectedPartIndex.value <= 0) {
+    Toast.info("已经是第一空");
+    return;
+  }
+  selectedPartIndex.value -= 1;
+}
+
+function goNextPart() {
+  const len = dockFocusedParts.value.length;
+  if (len <= 1 || selectedPartIndex.value >= len - 1) {
+    Toast.info("已经是最后一空");
+    return;
+  }
+  selectedPartIndex.value += 1;
+}
+
+watch([isDocked, dockQuestions], () => {
+  if (isDocked.value) ensureDockSelection();
+});
+
 function showPage(next) {
   const total = papers.value.length;
   const value = Math.min(Math.max(Number(next) || 1, 1), total || 1);
   page.value = value;
   selectedQuestionN.value = null;
   selectedPartIndex.value = 0;
+  if (isDocked.value) ensureDockSelection();
   paperAnchor.value?.scrollIntoView({ block: "start" });
 }
 
@@ -204,6 +299,7 @@ async function changeDockSide(value) {
     if (next === "off") {
       Toast.success("已恢复常规窗口");
     } else {
+      ensureDockSelection();
       Toast.success(next === "left" ? "已贴在屏幕左侧" : "已贴在屏幕右侧");
     }
   } catch (err) {
@@ -572,6 +668,7 @@ async function start() {
     page.value = 1;
     selectedQuestionN.value = null;
     selectedPartIndex.value = 0;
+    if (isDocked.value) ensureDockSelection();
     sessionUsageText.value = resp.usageText || "";
     status.value = resp.summary || "";
     await refreshFiles();
@@ -597,7 +694,7 @@ async function start() {
             <span v-if="appVersionText" class="app-version">v{{ appVersionText }}</span>
           </div>
           <p v-if="!isDocked">多份作业一次只显示一份，用分页切换。是否保存答案文件可以自己选。</p>
-          <p v-else class="dock-tagline">贴边模式：浏览器做题，这里看答案。点「设置」可改模型或重新获取。</p>
+          <p v-else class="dock-tagline">贴边模式：用窄栏上一题/下一题或题号跳转对照答案；{{ hotkeyHint }} 复制当前空。</p>
         </div>
         <div class="brand-actions">
           <Button v-if="isDocked" size="small" @click="showDockSettings = !showDockSettings">
@@ -777,9 +874,42 @@ async function start() {
           <Button v-if="currentPaper.ok" size="small" @click="copyText(currentPaper.text)">复制本份</Button>
         </div>
         <Banner v-if="!currentPaper.ok" class="alert" type="danger" :description="currentPaper.error" />
-        <div v-else class="q-list">
+        <div v-if="isDocked && currentPaper.ok && dockQuestions.length" class="dock-nav">
+          <Button size="small" :disabled="dockQuestionIndex <= 0" @click="goPrevQuestion">上一题</Button>
+          <Select
+            :value="dockFocusedQuestion?.n"
+            :optionList="dockQuestionOptions"
+            class="dock-nav-select"
+            size="small"
+            @change="jumpDockQuestion"
+          />
+          <span class="dock-nav-pos">{{ dockQuestionIndex + 1 }} / {{ dockQuestions.length }}</span>
+          <Button size="small" :disabled="dockQuestionIndex >= dockQuestions.length - 1" @click="goNextQuestion">
+            下一题
+          </Button>
+        </div>
+        <div
+          v-if="isDocked && currentPaper.ok && dockFocusedParts.length > 1"
+          class="dock-part-nav"
+        >
+          <Button size="small" :disabled="selectedPartIndex <= 0" @click="goPrevPart">上一空</Button>
+          <span class="dock-nav-pos">空 {{ selectedPartIndex + 1 }} / {{ dockFocusedParts.length }}</span>
+          <Button
+            size="small"
+            :disabled="selectedPartIndex >= dockFocusedParts.length - 1"
+            @click="goNextPart"
+          >
+            下一空
+          </Button>
+        </div>
+        <div v-if="isDocked && currentPaper.ok && dockQuestions.length > 1" class="dock-list-toggle">
+          <Button size="small" theme="borderless" type="primary" @click="dockShowAllQuestions = !dockShowAllQuestions">
+            {{ dockShowAllQuestions ? "收起题目列表" : "展开全部题目" }}
+          </Button>
+        </div>
+        <div v-if="currentPaper.ok" class="q-list">
           <Card
-            v-for="question in currentPaper.questions"
+            v-for="question in visibleQuestions"
             :key="`${page}-${question.n}`"
             class="q-card"
             :class="{ 'q-card--selected': isQuestionSelected(question) }"
@@ -879,6 +1009,10 @@ async function start() {
           获取答案后，在题目区域点一下某道题或某一空（会高亮）。焦点留在浏览器时，按
           <strong>{{ hotkeyHint }}</strong>
           可把当前选中答案写入剪贴板，再到作业页粘贴。选择题复制选项字母组合，填空题复制当前空。
+        </p>
+        <h2>窄栏导航（贴边做题）</h2>
+        <p>
+          贴在左或右侧时，答案区上方有「上一题 / 下一题」和下拉选题号，默认只显示当前一题，少在长列表里滚动。多空填空题另有「上一空 / 下一空」。需要对照多题时可点「展开全部题目」。
         </p>
         <div class="help-close">
           <Button theme="solid" type="primary" @click="helpOpen = false">知道了</Button>
