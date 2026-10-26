@@ -35,6 +35,7 @@ const status = ref("先点登录账号，在弹出的窗口登录。之后获取
 const error = ref("");
 const papers = ref([]);
 const saveAnswers = ref(true);
+const resumeCheckpoint = ref(true);
 const answerFiles = ref([]);
 const showAllFiles = ref(false);
 const selectedFiles = ref([]);
@@ -117,7 +118,7 @@ function showQuestionReason(question) {
 
 const dockQuestions = computed(() => {
   const paper = currentPaper.value;
-  if (!paper?.ok || !Array.isArray(paper.questions)) return [];
+  if (!paper?.questions?.length) return [];
   return paper.questions;
 });
 
@@ -146,7 +147,7 @@ const dockFocusedParts = computed(() => {
 
 const visibleQuestions = computed(() => {
   const paper = currentPaper.value;
-  if (!paper?.ok || !paper.questions?.length) return [];
+  if (!paper?.questions?.length) return [];
   if (isDocked.value && !dockShowAllQuestions.value && dockFocusedQuestion.value) {
     return [dockFocusedQuestion.value];
   }
@@ -722,6 +723,15 @@ function paperTitle(paper) {
   return paper.course ? `${paper.course} · ${paper.title}` : paper.title || "作业";
 }
 
+async function clearCheckpoint() {
+  try {
+    await api.clearSolveCheckpoint(url.value);
+    Toast.success(url.value.trim() ? "已清除地址框里作业的答题断点。" : "已清除本机全部答题断点。");
+  } catch (err) {
+    Toast.warning(err.message || "清除断点失败");
+  }
+}
+
 async function start() {
   error.value = "";
   papers.value = [];
@@ -742,7 +752,8 @@ async function start() {
       thinking.value && supportsThinking.value,
       (message) => {
         status.value = message;
-      }
+      },
+      resumeCheckpoint.value
     );
     if (!resp) throw new Error("没有返回结果");
     papers.value = resp.papers || [];
@@ -922,12 +933,22 @@ async function start() {
             </div>
           </div>
         </div>
+        <div class="save-row checkpoint-row">
+          <div>
+            <div class="field-label">断点续答</div>
+            <div class="save-hint">
+              每 4 题一组请求模型。中途失败或关闭软件后，开启此项再获取会跳过已成功的题组（保存在本机 checkpoint.json）。
+            </div>
+          </div>
+          <Switch :checked="resumeCheckpoint" @change="(value) => (resumeCheckpoint = isChecked(value))" />
+        </div>
         <div class="account">{{ accountName ? "当前账号：" + accountName : "当前账号：未登录" }}</div>
         <div class="actions">
           <Button theme="solid" type="primary" :loading="loggingIn" @click="login">
             {{ accountName ? "切换账号" : "登录账号" }}
           </Button>
           <Button theme="solid" type="primary" :loading="loading" :disabled="loggingIn" @click="start">获取答案</Button>
+          <Button :disabled="loading" @click="clearCheckpoint">清除断点</Button>
         </div>
         <div class="status">{{ status }}</div>
         <div v-if="sessionUsageText" class="usage-session">{{ sessionUsageText }}</div>
@@ -981,12 +1002,24 @@ async function start() {
           <div class="paper-copy">
             <strong>{{ paperTitle(currentPaper) }}</strong>
             <span v-if="currentPaper.ok">第 {{ page }} / {{ papers.length }} 份 · {{ currentPaper.questions.length }} 题<span v-if="currentPaper.file"> · 答案/{{ currentPaper.file }}</span></span>
+            <span v-else-if="currentPaper.questions?.length">第 {{ page }} / {{ papers.length }} 份 · 已显示 {{ currentPaper.questions.length }} 题（未答全）</span>
             <span v-else class="paper-url">第 {{ page }} / {{ papers.length }} 份 · {{ currentPaper.url }}</span>
           </div>
           <Button v-if="currentPaper.ok" size="small" @click="copyText(currentPaper.text)">复制本份</Button>
         </div>
-        <Banner v-if="!currentPaper.ok" class="alert" type="danger" :description="currentPaper.error" />
-        <div v-if="isDocked && currentPaper.ok && dockQuestions.length" class="dock-nav">
+        <Banner
+          v-if="!currentPaper.ok && currentPaper.checkpointHint"
+          class="alert"
+          type="warning"
+          :description="currentPaper.checkpointHint"
+        />
+        <Banner
+          v-else-if="!currentPaper.ok && currentPaper.error"
+          class="alert"
+          type="danger"
+          :description="currentPaper.error"
+        />
+        <div v-if="isDocked && currentPaper.questions?.length && dockQuestions.length" class="dock-nav">
           <Button size="small" :disabled="dockQuestionIndex <= 0" @click="goPrevQuestion">上一题</Button>
           <Select
             :value="dockFocusedQuestion?.n"
@@ -1001,7 +1034,7 @@ async function start() {
           </Button>
         </div>
         <div
-          v-if="isDocked && currentPaper.ok && dockFocusedParts.length > 1"
+          v-if="isDocked && currentPaper.questions?.length && dockFocusedParts.length > 1"
           class="dock-part-nav"
         >
           <Button size="small" :disabled="selectedPartIndex <= 0" @click="goPrevPart">上一空</Button>
@@ -1014,12 +1047,12 @@ async function start() {
             下一空
           </Button>
         </div>
-        <div v-if="isDocked && currentPaper.ok && dockQuestions.length > 1" class="dock-list-toggle">
+        <div v-if="isDocked && currentPaper.questions?.length && dockQuestions.length > 1" class="dock-list-toggle">
           <Button size="small" theme="borderless" type="primary" @click="dockShowAllQuestions = !dockShowAllQuestions">
             {{ dockShowAllQuestions ? "收起题目列表" : "展开全部题目" }}
           </Button>
         </div>
-        <div v-if="currentPaper.ok" class="q-list">
+        <div v-if="currentPaper.questions?.length" class="q-list">
           <Card
             v-for="question in visibleQuestions"
             :key="`${page}-${question.n}`"
@@ -1133,6 +1166,10 @@ async function start() {
         <h2>窗口透明度（贴边）</h2>
         <p>
           贴在左或右侧时可选 95% / 90% / 85% 略透明，便于同时看到浏览器里的题目。透明度仅 Windows 贴边生效；切回常规窗口会恢复不透明。
+        </p>
+        <h2>断点续答</h2>
+        <p>
+          题目按 4 题一组调用模型。开启「断点续答」后，每组成功会写入本机 checkpoint.json；再次获取同一作业且题干未变时自动跳过已答组。换模型或关闭续答会重新全量请求。未答全时不要写入答案 txt，答全后断点自动清除。可点「清除断点」手动删除。
         </p>
         <div class="help-close">
           <Button theme="solid" type="primary" @click="helpOpen = false">知道了</Button>

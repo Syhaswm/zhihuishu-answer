@@ -28,7 +28,7 @@ def load_token() -> str:
 def main():
     tag = sys.argv[1] if len(sys.argv) > 1 else "v1.7.8"
     version = tag.lstrip("v")
-    body = sys.argv[2] if len(sys.argv) > 2 else f"## {tag}\n\n- 贴边窗口透明度：不透明 / 95% / 90% / 85%（Windows）\n- 恢复常规窗口自动回到不透明\n"
+    body = sys.argv[2] if len(sys.argv) > 2 else f"## {tag}\n\n- 断点续答：每组题目成功后写入 checkpoint.json，再次获取自动跳过\n- 未答全可续答；答全后自动清除断点\n"
     if not SETUP.is_file():
         raise SystemExit(f"缺少安装包: {SETUP}")
 

@@ -116,6 +116,14 @@ export function setDockPref(side, width, alwaysOnTop, opacity) {
   });
 }
 
+export function clearSolveCheckpoint(urls) {
+  return request("/api/checkpoint/clear", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ urls: urls || "" }),
+  });
+}
+
 export function setDisplayPref(showReason, fontSize) {
   return request("/api/settings/display", {
     method: "POST",
@@ -160,8 +168,8 @@ export function loginStatus() {
   return request("/api/login/status");
 }
 
-export async function solveBatch(urls, apiKey, provider, model, baseUrl, thinking, onProgress) {
-  const body = JSON.stringify({ urls, apiKey, provider, model, baseUrl, thinking });
+export async function solveBatch(urls, apiKey, provider, model, baseUrl, thinking, onProgress, resume = true) {
+  const body = JSON.stringify({ urls, apiKey, provider, model, baseUrl, thinking, resume });
   let response;
   try {
     response = await fetch(API + "/api/solve", {

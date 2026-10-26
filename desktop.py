@@ -637,7 +637,17 @@ class Api:
                     errors[index] = exc
         return fetched, errors
 
-    def solve_batch(self, text, api_key, provider="deepseek", model="", base_url="", thinking=False):
+    def clear_solve_checkpoint(self, text):
+        urls = answer.split_homework_urls(text)
+        if urls:
+            answer.clear_checkpoint_urls(urls)
+            return {"ok": True, "cleared": len(urls)}
+        answer.save_checkpoint({"version": answer.CHECKPOINT_VERSION, "entries": {}})
+        return {"ok": True, "cleared": "all"}
+        answer.save_checkpoint({"version": answer.CHECKPOINT_VERSION, "entries": {}})
+        return {"ok": True, "cleared": "all"}
+
+    def solve_batch(self, text, api_key, provider="deepseek", model="", base_url="", thinking=False, resume=True):
         urls = answer.split_homework_urls(text)
         if not urls:
             return {"ok": False, "error": "请输入作业页地址，每行一个。", "papers": []}
@@ -652,6 +662,10 @@ class Api:
         save_files = self._save_answers()
         folder = answer.ROOT / "答案" if save_files else None
         total = len(urls)
+        if not resume:
+            answer.clear_checkpoint_urls(urls)
+        checkpoint = answer.load_checkpoint()
+        skipped_chunks = 0
         for url in urls:
             if answer.is_polymas_url(url):
                 cookie = self._sync_polymas(url, cookie)
@@ -665,14 +679,34 @@ class Api:
                 fetched[i] = exam
                 errors[i] = exc
         jobs = []
+        found = {index: {} for index in range(total)}
         for index, exam in enumerate(fetched):
             if not exam:
                 continue
+            paper_url = urls[index]
+            entry = (
+                answer.checkpoint_entry(
+                    checkpoint,
+                    paper_url,
+                    provider_info["id"],
+                    model_name,
+                    bool(thinking),
+                    exam["questions"],
+                )
+                if resume
+                else None
+            )
+            if entry:
+                answer.merge_checkpoint_into_found(entry, found[index])
             for chunk in answer.question_chunks(exam["questions"]):
+                if resume and entry and answer.checkpoint_chunk_answers(entry, chunk):
+                    skipped_chunks += 1
+                    continue
                 jobs.append((index, chunk))
-        found = {index: {} for index in range(total)}
         chunk_errors = {}
         session_usage = answer.empty_usage()
+        if skipped_chunks:
+            self._progress(f"断点续答：跳过 {skipped_chunks} 组已答题目，待请求 {len(jobs)} 组…")
         if jobs:
             self._progress(f"正在同时解答 {len(jobs)} 组题目…")
             done = 0
@@ -705,6 +739,19 @@ class Api:
                                 batch = payload or []
                             for item in batch:
                                 found[index][item["n"]] = item
+                            if resume:
+                                exam = fetched[index]
+                                if exam:
+                                    answer.save_checkpoint_chunk(
+                                        checkpoint,
+                                        urls[index],
+                                        provider_info["id"],
+                                        model_name,
+                                        bool(thinking),
+                                        exam["questions"],
+                                        chunk,
+                                        payload if isinstance(payload, dict) else {"answers": batch},
+                                    )
                         except Exception as exc:
                             chunk_errors.setdefault(index, exc)
                         self._progress(f"解答进度 {done}/{len(jobs)}")
@@ -718,29 +765,60 @@ class Api:
                 papers.append(self._failed_paper(index, url, chunk_errors[index]))
                 continue
             answer.apply_answers(exam, found[index])
-            result = answer.result_payload(exam, folder=folder, index=index + 1, save=save_files)
-            result["ok"] = True
+            complete = answer.paper_answers_complete(found[index], exam)
+            result = answer.result_payload(exam, folder=folder, index=index + 1, save=save_files and complete)
+            result["ok"] = complete
             result["url"] = url
+            total_q = len(exam.get("questions") or [])
+            answered_q = len(found[index])
+            if not complete:
+                missing = total_q - answered_q
+                err = chunk_errors.get(index)
+                hint = f"已答 {answered_q}/{total_q} 题"
+                if missing:
+                    hint += f"，还差 {missing} 题"
+                hint += "。再次点「获取答案」且开启断点续答可只补未完成的题组。"
+                result["error"] = str(err) if err else hint
+                result["checkpointHint"] = hint
+            elif resume:
+                answer.clear_checkpoint_url(checkpoint, url)
             papers.append(result)
         done = sum(1 for paper in papers if paper.get("ok"))
-        failed = total - done
-        if not done:
-            summary = "这几份作业都没有取到答案。"
-        elif not save_files:
-            summary = f"完成 {done} 份。" + (f"{failed} 份没有取到。" if failed else "") + "这次没有写入答案文件夹。"
-        elif failed:
-            summary = f"完成 {done} 份，{failed} 份没有取到。成功的答案分别保存在「答案」文件夹。"
+        partial = sum(1 for paper in papers if not paper.get("ok") and paper.get("questions"))
+        failed = total - done - partial
+        if skipped_chunks:
+            resume_note = f"断点续答跳过 {skipped_chunks} 组题目。"
         else:
-            summary = f"完成 {done} 份。每份答案单独保存在「答案」文件夹。"
+            resume_note = ""
+        if not done and not partial:
+            summary = "这几份作业都没有取到答案。"
+        elif partial and not done:
+            summary = resume_note + f"有 {partial} 份只答了一部分，已写入断点，可再次获取续答。"
+        elif not save_files:
+            summary = resume_note + f"完成 {done} 份。" + (f"{failed} 份没有取到。" if failed else "")
+            if partial:
+                summary += f" {partial} 份未答全，可续答。"
+            summary += "这次没有写入答案文件夹。"
+        elif failed or partial:
+            summary = resume_note + f"完成 {done} 份"
+            if failed:
+                summary += f"，{failed} 份没有取到"
+            if partial:
+                summary += f"，{partial} 份未答全（可续答）"
+            summary += "。成功的答案保存在「答案」文件夹。"
+        else:
+            summary = resume_note + f"完成 {done} 份。每份答案单独保存在「答案」文件夹。"
         usage_text = answer.format_session_usage(session_usage)
         self._progress(summary if not usage_text else f"{summary}\n{usage_text}")
         return {
-            "ok": done > 0,
-            "error": "" if done else summary,
+            "ok": done > 0 or partial > 0,
+            "error": "" if (done or partial) else summary,
             "papers": papers,
             "summary": summary,
             "usage": session_usage,
             "usageText": usage_text,
+            "skippedChunks": skipped_chunks,
+            "resume": bool(resume),
         }
 
 

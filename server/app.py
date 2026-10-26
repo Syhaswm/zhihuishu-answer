@@ -113,6 +113,11 @@ class SolveIn(BaseModel):
     model: str = ""
     baseUrl: str = ""
     thinking: bool = False
+    resume: bool = True
+
+
+class CheckpointClearIn(BaseModel):
+    urls: str = ""
 
 
 class LoginIn(BaseModel):
@@ -166,6 +171,11 @@ def set_dock(body: DockIn):
 @app.post("/api/settings/display")
 def set_display(body: DisplayIn):
     return api.set_display_pref(body.showReason, body.fontSize)
+
+
+@app.post("/api/checkpoint/clear")
+def clear_checkpoint(body: CheckpointClearIn):
+    return api.clear_solve_checkpoint(body.urls)
 
 
 @app.get("/api/answers")
@@ -306,7 +316,13 @@ def solve(body: SolveIn):
         api._on_progress = on_progress
         try:
             result = api.solve_batch(
-                body.urls, body.apiKey, body.provider, body.model, body.baseUrl, body.thinking
+                body.urls,
+                body.apiKey,
+                body.provider,
+                body.model,
+                body.baseUrl,
+                body.thinking,
+                body.resume,
             )
         except Exception as exc:
             result = {"ok": False, "error": str(exc), "papers": [], "summary": str(exc)}

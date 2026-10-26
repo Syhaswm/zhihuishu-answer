@@ -5,6 +5,7 @@
 通常要更新的是 CASTGC、jt-cas、CASLOGC、JSESSIONID、acw_tc、SERVERID。
 """
 
+import hashlib
 import json
 import re
 import socket
@@ -1030,6 +1031,180 @@ def align_to_options(options, raw):
         elif len(fuzzy) == 1:
             add(fuzzy[0])
     return chosen or pieces
+
+
+CHECKPOINT_VERSION = 1
+CHECKPOINT_FILE = ROOT / "checkpoint.json"
+_CHECKPOINT_LOCK = threading.Lock()
+
+
+def _checkpoint_url_key(url):
+    return hashlib.sha256(str(url or "").strip().encode("utf-8")).hexdigest()[:24]
+
+
+def _checkpoint_sig(provider_id, model, thinking):
+    return f"{provider_id}|{model or ''}|{int(bool(thinking))}"
+
+
+def questions_fingerprint(questions):
+    digest = hashlib.sha256()
+    for question in questions:
+        row = json.dumps(
+            {
+                "n": question.get("n"),
+                "stem": question.get("stem"),
+                "options": question.get("options") or [],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        digest.update(row.encode("utf-8"))
+    return digest.hexdigest()[:24]
+
+
+def chunk_slot_key(chunk):
+    return f"{chunk[0]['n']}-{chunk[-1]['n']}"
+
+
+def load_checkpoint():
+    if not CHECKPOINT_FILE.is_file():
+        return {"version": CHECKPOINT_VERSION, "entries": {}}
+    try:
+        data = json.loads(CHECKPOINT_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return {"version": CHECKPOINT_VERSION, "entries": {}}
+    if data.get("version") != CHECKPOINT_VERSION:
+        return {"version": CHECKPOINT_VERSION, "entries": {}}
+    if not isinstance(data.get("entries"), dict):
+        data["entries"] = {}
+    return data
+
+
+def save_checkpoint(data):
+    CHECKPOINT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = CHECKPOINT_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(CHECKPOINT_FILE)
+
+
+def checkpoint_entry(checkpoint, url, provider_id, model, thinking, questions):
+    key = _checkpoint_url_key(url)
+    entry = checkpoint.get("entries", {}).get(key)
+    if not entry:
+        return None
+    if entry.get("url") != str(url or "").strip():
+        return None
+    if entry.get("sig") != _checkpoint_sig(provider_id, model, thinking):
+        return None
+    if entry.get("questions_fp") != questions_fingerprint(questions):
+        return None
+    return entry
+
+
+def ensure_checkpoint_entry(checkpoint, url, provider_id, model, thinking, questions):
+    key = _checkpoint_url_key(url)
+    entries = checkpoint.setdefault("entries", {})
+    entry = checkpoint_entry(checkpoint, url, provider_id, model, thinking, questions)
+    if entry:
+        return entry
+    entries[key] = {
+        "url": str(url or "").strip(),
+        "sig": _checkpoint_sig(provider_id, model, thinking),
+        "questions_fp": questions_fingerprint(questions),
+        "chunks": {},
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    return entries[key]
+
+
+def checkpoint_chunk_answers(entry, chunk):
+    if not entry:
+        return None
+    chunks = entry.get("chunks") or {}
+    slot = chunks.get(chunk_slot_key(chunk))
+    if not slot:
+        return None
+    if slot.get("fp") != questions_fingerprint(chunk):
+        return None
+    answers = slot.get("answers")
+    return answers if isinstance(answers, list) and answers else None
+
+
+def merge_checkpoint_into_found(entry, found):
+    if not entry:
+        return 0
+    added = 0
+    for slot in (entry.get("chunks") or {}).values():
+        for item in slot.get("answers") or []:
+            if not isinstance(item, dict):
+                continue
+            n = int(item.get("n") or 0)
+            if not n:
+                continue
+            found.setdefault(n, item)
+            added += 1
+    return added
+
+
+def save_checkpoint_chunk(checkpoint, url, provider_id, model, thinking, questions, chunk, payload):
+    answers = payload.get("answers") if isinstance(payload, dict) else payload
+    if not isinstance(answers, list) or not answers:
+        return
+    cleaned = []
+    for item in answers:
+        if not isinstance(item, dict):
+            continue
+        n = int(item.get("n") or 0)
+        if not n:
+            continue
+        cleaned.append(
+            {
+                "n": n,
+                "answer": item.get("answer"),
+                "reason": item.get("reason") or "",
+            }
+        )
+    if not cleaned:
+        return
+    with _CHECKPOINT_LOCK:
+        entry = ensure_checkpoint_entry(checkpoint, url, provider_id, model, thinking, questions)
+        entry.setdefault("chunks", {})[chunk_slot_key(chunk)] = {
+            "fp": questions_fingerprint(chunk),
+            "answers": cleaned,
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        entry["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        save_checkpoint(checkpoint)
+
+
+def clear_checkpoint_urls(urls):
+    checkpoint = load_checkpoint()
+    keys = {_checkpoint_url_key(url) for url in urls if str(url or "").strip()}
+    if not keys:
+        return
+    with _CHECKPOINT_LOCK:
+        entries = checkpoint.get("entries") or {}
+        for key in keys:
+            entries.pop(key, None)
+        checkpoint["entries"] = entries
+        save_checkpoint(checkpoint)
+
+
+def clear_checkpoint_url(checkpoint, url):
+    key = _checkpoint_url_key(url)
+    with _CHECKPOINT_LOCK:
+        entries = checkpoint.get("entries") or {}
+        if key in entries:
+            del entries[key]
+            checkpoint["entries"] = entries
+            save_checkpoint(checkpoint)
+
+
+def paper_answers_complete(found, exam):
+    needed = {question["n"] for question in exam.get("questions") or []}
+    if not needed:
+        return True
+    return needed.issubset(found.keys())
 
 
 def question_chunks(questions, size=CHUNK):
