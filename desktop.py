@@ -644,10 +644,34 @@ class Api:
             return {"ok": True, "cleared": len(urls)}
         answer.save_checkpoint({"version": answer.CHECKPOINT_VERSION, "entries": {}})
         return {"ok": True, "cleared": "all"}
-        answer.save_checkpoint({"version": answer.CHECKPOINT_VERSION, "entries": {}})
-        return {"ok": True, "cleared": "all"}
 
-    def solve_batch(self, text, api_key, provider="deepseek", model="", base_url="", thinking=False, resume=True):
+    def checkpoint_pending(self, text, provider="deepseek", model="", base_url="", thinking=False):
+        urls = answer.split_homework_urls(text)
+        try:
+            provider_info, _endpoint, model_name = answer.resolve_provider(provider, model, base_url)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc), "items": [], "count": 0}
+        checkpoint = answer.load_checkpoint()
+        items = answer.checkpoint_pending_items(
+            checkpoint,
+            urls,
+            provider_info["id"],
+            model_name,
+            bool(thinking),
+        )
+        return {"ok": True, "items": items, "count": len(items)}
+
+    def solve_batch(
+        self,
+        text,
+        api_key,
+        provider="deepseek",
+        model="",
+        base_url="",
+        thinking=False,
+        resume=True,
+        retry_failed_only=False,
+    ):
         urls = answer.split_homework_urls(text)
         if not urls:
             return {"ok": False, "error": "请输入作业页地址，每行一个。", "papers": []}
@@ -661,11 +685,31 @@ class Api:
             return {"ok": False, "error": str(exc), "papers": []}
         save_files = self._save_answers()
         folder = answer.ROOT / "答案" if save_files else None
+        checkpoint = answer.load_checkpoint()
+        if retry_failed_only:
+            resume = True
+            pending_urls = answer.filter_urls_retry_failed(
+                checkpoint,
+                urls,
+                provider_info["id"],
+                model_name,
+                bool(thinking),
+            )
+            if not pending_urls:
+                return {
+                    "ok": False,
+                    "error": "没有需要续答的作业。请确认地址与上次一致、模型未改，且上次未答全或存在失败题组。",
+                    "papers": [],
+                    "retryFailedOnly": True,
+                }
+            urls = pending_urls
+            self._progress(f"仅重试失败：{len(urls)} 份未答全，跳过已完成的作业…")
         total = len(urls)
         if not resume:
             answer.clear_checkpoint_urls(urls)
-        checkpoint = answer.load_checkpoint()
+            checkpoint = answer.load_checkpoint()
         skipped_chunks = 0
+        retried_chunks = 0
         for url in urls:
             if answer.is_polymas_url(url):
                 cookie = self._sync_polymas(url, cookie)
@@ -684,8 +728,9 @@ class Api:
             if not exam:
                 continue
             paper_url = urls[index]
-            entry = (
-                answer.checkpoint_entry(
+            entry = None
+            if resume:
+                answer.prepare_checkpoint_paper(
                     checkpoint,
                     paper_url,
                     provider_info["id"],
@@ -693,20 +738,32 @@ class Api:
                     bool(thinking),
                     exam["questions"],
                 )
-                if resume
-                else None
-            )
-            if entry:
-                answer.merge_checkpoint_into_found(entry, found[index])
+                entry = answer.checkpoint_entry(
+                    checkpoint,
+                    paper_url,
+                    provider_info["id"],
+                    model_name,
+                    bool(thinking),
+                    exam["questions"],
+                )
+                if entry:
+                    answer.merge_checkpoint_into_found(entry, found[index])
             for chunk in answer.question_chunks(exam["questions"]):
                 if resume and entry and answer.checkpoint_chunk_answers(entry, chunk):
                     skipped_chunks += 1
                     continue
+                if resume and entry:
+                    failed_slots = entry.get("failed_chunks") or {}
+                    if answer.chunk_slot_key(chunk) in failed_slots:
+                        retried_chunks += 1
                 jobs.append((index, chunk))
         chunk_errors = {}
         session_usage = answer.empty_usage()
         if skipped_chunks:
-            self._progress(f"断点续答：跳过 {skipped_chunks} 组已答题目，待请求 {len(jobs)} 组…")
+            note = f"断点续答：跳过 {skipped_chunks} 组已答题目，待请求 {len(jobs)} 组"
+            if retried_chunks:
+                note += f"（含 {retried_chunks} 组上次失败）"
+            self._progress(note + "…")
         if jobs:
             self._progress(f"正在同时解答 {len(jobs)} 组题目…")
             done = 0
@@ -753,7 +810,20 @@ class Api:
                                         payload if isinstance(payload, dict) else {"answers": batch},
                                     )
                         except Exception as exc:
-                            chunk_errors.setdefault(index, exc)
+                            chunk_errors[index] = exc
+                            if resume:
+                                exam = fetched[index]
+                                if exam:
+                                    answer.mark_checkpoint_chunk_failed(
+                                        checkpoint,
+                                        urls[index],
+                                        provider_info["id"],
+                                        model_name,
+                                        bool(thinking),
+                                        exam["questions"],
+                                        chunk,
+                                        exc,
+                                    )
                         self._progress(f"解答进度 {done}/{len(jobs)}")
         papers = []
         for index, url in enumerate(urls):
@@ -777,7 +847,7 @@ class Api:
                 hint = f"已答 {answered_q}/{total_q} 题"
                 if missing:
                     hint += f"，还差 {missing} 题"
-                hint += "。再次点「获取答案」且开启断点续答可只补未完成的题组。"
+                hint += "。可点「仅重试失败」或开启断点续答后再获取，只补未完成的题组。"
                 result["error"] = str(err) if err else hint
                 result["checkpointHint"] = hint
             elif resume:
@@ -819,6 +889,8 @@ class Api:
             "usageText": usage_text,
             "skippedChunks": skipped_chunks,
             "resume": bool(resume),
+            "retryFailedOnly": bool(retry_failed_only),
+            "retriedChunks": retried_chunks,
         }
 
 

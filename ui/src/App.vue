@@ -36,6 +36,8 @@ const error = ref("");
 const papers = ref([]);
 const saveAnswers = ref(true);
 const resumeCheckpoint = ref(true);
+const pendingRetryCount = ref(0);
+const pendingRetryHint = ref("");
 const answerFiles = ref([]);
 const showAllFiles = ref(false);
 const selectedFiles = ref([]);
@@ -625,6 +627,7 @@ onMounted(() => {
       updateCheckFailed.value = "检查更新失败，请确认本机答题服务正常。";
     });
   registerCopyHotkey(() => copyHotkeyAnswer()).catch(() => {});
+  refreshCheckpointPending();
 });
 
 onUnmounted(() => {
@@ -723,16 +726,49 @@ function paperTitle(paper) {
   return paper.course ? `${paper.course} · ${paper.title}` : paper.title || "作业";
 }
 
+async function refreshCheckpointPending() {
+  if (!url.value.trim()) {
+    pendingRetryCount.value = 0;
+    pendingRetryHint.value = "";
+    return;
+  }
+  try {
+    const data = await api.fetchCheckpointPending(
+      url.value,
+      provider.value,
+      modelName.value,
+      baseUrl.value,
+      thinking.value && supportsThinking.value
+    );
+    pendingRetryCount.value = data.count || 0;
+    const items = data.items || [];
+    if (!items.length) {
+      pendingRetryHint.value = "";
+      return;
+    }
+    if (items.length === 1) {
+      const item = items[0];
+      pendingRetryHint.value = `1 份未答全（${item.answered}/${item.total} 题${item.failedGroups ? `，${item.failedGroups} 组失败` : ""}）`;
+    } else {
+      pendingRetryHint.value = `${items.length} 份未答全，可只重试失败部分`;
+    }
+  } catch {
+    pendingRetryCount.value = 0;
+    pendingRetryHint.value = "";
+  }
+}
+
 async function clearCheckpoint() {
   try {
     await api.clearSolveCheckpoint(url.value);
     Toast.success(url.value.trim() ? "已清除地址框里作业的答题断点。" : "已清除本机全部答题断点。");
+    await refreshCheckpointPending();
   } catch (err) {
     Toast.warning(err.message || "清除断点失败");
   }
 }
 
-async function start() {
+async function runSolve(retryFailedOnly = false) {
   error.value = "";
   papers.value = [];
   sessionUsageText.value = "";
@@ -740,8 +776,16 @@ async function start() {
     error.value = "请输入作业页地址，每行一个。";
     return;
   }
+  if (retryFailedOnly) {
+    await refreshCheckpointPending();
+    if (!pendingRetryCount.value) {
+      Toast.warning("当前没有需要续答的作业。");
+      return;
+    }
+    resumeCheckpoint.value = true;
+  }
   loading.value = true;
-  status.value = "正在同时获取每一份作业…";
+  status.value = retryFailedOnly ? "正在仅重试未答全的作业…" : "正在同时获取每一份作业…";
   try {
     const resp = await api.solveBatch(
       url.value,
@@ -753,7 +797,8 @@ async function start() {
       (message) => {
         status.value = message;
       },
-      resumeCheckpoint.value
+      resumeCheckpoint.value,
+      retryFailedOnly
     );
     if (!resp) throw new Error("没有返回结果");
     papers.value = resp.papers || [];
@@ -764,6 +809,7 @@ async function start() {
     sessionUsageText.value = resp.usageText || "";
     status.value = resp.summary || "";
     await refreshFiles();
+    await refreshCheckpointPending();
     if (!resp.ok && !papers.value.length) {
       error.value = resp.error || "没有返回结果";
     }
@@ -773,6 +819,18 @@ async function start() {
     loading.value = false;
   }
 }
+
+async function start() {
+  await runSolve(false);
+}
+
+async function startRetryFailed() {
+  await runSolve(true);
+}
+
+watch([url, provider, modelName, baseUrl, thinking], () => {
+  refreshCheckpointPending();
+});
 </script>
 
 <template>
@@ -938,6 +996,7 @@ async function start() {
             <div class="field-label">断点续答</div>
             <div class="save-hint">
               每 4 题一组请求模型。中途失败或关闭软件后，开启此项再获取会跳过已成功的题组（保存在本机 checkpoint.json）。
+              <span v-if="pendingRetryHint" class="pending-retry-hint">{{ pendingRetryHint }}</span>
             </div>
           </div>
           <Switch :checked="resumeCheckpoint" @change="(value) => (resumeCheckpoint = isChecked(value))" />
@@ -948,6 +1007,13 @@ async function start() {
             {{ accountName ? "切换账号" : "登录账号" }}
           </Button>
           <Button theme="solid" type="primary" :loading="loading" :disabled="loggingIn" @click="start">获取答案</Button>
+          <Button
+            :loading="loading"
+            :disabled="loggingIn || !pendingRetryCount"
+            @click="startRetryFailed"
+          >
+            仅重试失败
+          </Button>
           <Button :disabled="loading" @click="clearCheckpoint">清除断点</Button>
         </div>
         <div class="status">{{ status }}</div>
@@ -1167,9 +1233,9 @@ async function start() {
         <p>
           贴在左或右侧时可选 95% / 90% / 85% 略透明，便于同时看到浏览器里的题目。透明度仅 Windows 贴边生效；切回常规窗口会恢复不透明。
         </p>
-        <h2>断点续答</h2>
+        <h2>断点续答与仅重试失败</h2>
         <p>
-          题目按 4 题一组调用模型。开启「断点续答」后，每组成功会写入本机 checkpoint.json；再次获取同一作业且题干未变时自动跳过已答组。换模型或关闭续答会重新全量请求。未答全时不要写入答案 txt，答全后断点自动清除。可点「清除断点」手动删除。
+          题目按 4 题一组调用模型。开启「断点续答」后，每组成功会写入本机 checkpoint.json；再次「获取答案」且题干未变时会跳过已答组。失败的题组会单独记录，可点「仅重试失败」只处理未答全的作业、只请求未成功的题组（已完成的作业地址不会重复调模型）。换模型或关闭续答会重新全量请求。答全后断点自动清除，也可点「清除断点」。
         </p>
         <div class="help-close">
           <Button theme="solid" type="primary" @click="helpOpen = false">知道了</Button>

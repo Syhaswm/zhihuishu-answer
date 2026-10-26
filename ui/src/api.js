@@ -168,8 +168,35 @@ export function loginStatus() {
   return request("/api/login/status");
 }
 
-export async function solveBatch(urls, apiKey, provider, model, baseUrl, thinking, onProgress, resume = true) {
-  const body = JSON.stringify({ urls, apiKey, provider, model, baseUrl, thinking, resume });
+export function fetchCheckpointPending(urls, provider, model, baseUrl, thinking) {
+  return request("/api/checkpoint/pending", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ urls, provider, model, baseUrl, thinking }),
+  });
+}
+
+export async function solveBatch(
+  urls,
+  apiKey,
+  provider,
+  model,
+  baseUrl,
+  thinking,
+  onProgress,
+  resume = true,
+  retryFailedOnly = false
+) {
+  const body = JSON.stringify({
+    urls,
+    apiKey,
+    provider,
+    model,
+    baseUrl,
+    thinking,
+    resume,
+    retryFailedOnly,
+  });
   let response;
   try {
     response = await fetch(API + "/api/solve", {

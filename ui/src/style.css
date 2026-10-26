@@ -173,6 +173,12 @@ body {
   margin-top: 12px;
 }
 
+.pending-retry-hint {
+  display: block;
+  margin-top: 4px;
+  color: var(--semi-color-warning, #b88230);
+}
+
 .page--answer-font-small .q-list .stem,
 .page--answer-font-small .q-list .answer,
 .page--answer-font-small .q-list .answer-text,

@@ -28,7 +28,7 @@ def load_token() -> str:
 def main():
     tag = sys.argv[1] if len(sys.argv) > 1 else "v1.7.8"
     version = tag.lstrip("v")
-    body = sys.argv[2] if len(sys.argv) > 2 else f"## {tag}\n\n- 断点续答：每组题目成功后写入 checkpoint.json，再次获取自动跳过\n- 未答全可续答；答全后自动清除断点\n"
+    body = sys.argv[2] if len(sys.argv) > 2 else f"## {tag}\n\n- 「仅重试失败」：只续答未答全作业，只请求失败/未完成题组\n- 失败题组写入 checkpoint，成功组自动跳过\n"
     if not SETUP.is_file():
         raise SystemExit(f"缺少安装包: {SETUP}")
 

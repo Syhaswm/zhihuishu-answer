@@ -114,10 +114,19 @@ class SolveIn(BaseModel):
     baseUrl: str = ""
     thinking: bool = False
     resume: bool = True
+    retryFailedOnly: bool = False
 
 
 class CheckpointClearIn(BaseModel):
     urls: str = ""
+
+
+class CheckpointPendingIn(BaseModel):
+    urls: str = ""
+    provider: str = "deepseek"
+    model: str = ""
+    baseUrl: str = ""
+    thinking: bool = False
 
 
 class LoginIn(BaseModel):
@@ -176,6 +185,17 @@ def set_display(body: DisplayIn):
 @app.post("/api/checkpoint/clear")
 def clear_checkpoint(body: CheckpointClearIn):
     return api.clear_solve_checkpoint(body.urls)
+
+
+@app.post("/api/checkpoint/pending")
+def checkpoint_pending(body: CheckpointPendingIn):
+    return api.checkpoint_pending(
+        body.urls,
+        body.provider,
+        body.model,
+        body.baseUrl,
+        body.thinking,
+    )
 
 
 @app.get("/api/answers")
@@ -323,6 +343,7 @@ def solve(body: SolveIn):
                 body.baseUrl,
                 body.thinking,
                 body.resume,
+                body.retryFailedOnly,
             )
         except Exception as exc:
             result = {"ok": False, "error": str(exc), "papers": [], "summary": str(exc)}

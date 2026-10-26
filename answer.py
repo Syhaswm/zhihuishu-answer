@@ -1168,13 +1168,107 @@ def save_checkpoint_chunk(checkpoint, url, provider_id, model, thinking, questio
         return
     with _CHECKPOINT_LOCK:
         entry = ensure_checkpoint_entry(checkpoint, url, provider_id, model, thinking, questions)
-        entry.setdefault("chunks", {})[chunk_slot_key(chunk)] = {
+        slot_key = chunk_slot_key(chunk)
+        entry.setdefault("chunks", {})[slot_key] = {
             "fp": questions_fingerprint(chunk),
             "answers": cleaned,
             "updated_at": datetime.now().isoformat(timespec="seconds"),
         }
+        failed = entry.get("failed_chunks")
+        if isinstance(failed, dict):
+            failed.pop(slot_key, None)
         entry["updated_at"] = datetime.now().isoformat(timespec="seconds")
         save_checkpoint(checkpoint)
+
+
+def checkpoint_entry_loose(checkpoint, url, provider_id, model, thinking):
+    key = _checkpoint_url_key(url)
+    entry = checkpoint.get("entries", {}).get(key)
+    if not entry:
+        return None
+    if entry.get("url") != str(url or "").strip():
+        return None
+    if entry.get("sig") != _checkpoint_sig(provider_id, model, thinking):
+        return None
+    return entry
+
+
+def entry_answered_count(entry):
+    if not entry:
+        return 0
+    numbers = set()
+    for slot in (entry.get("chunks") or {}).values():
+        for item in slot.get("answers") or []:
+            if not isinstance(item, dict):
+                continue
+            n = int(item.get("n") or 0)
+            if n:
+                numbers.add(n)
+    return len(numbers)
+
+
+def entry_is_pending(entry):
+    if not entry:
+        return False
+    failed = entry.get("failed_chunks") or {}
+    if failed:
+        return True
+    total = int(entry.get("total_questions") or 0)
+    if total <= 0:
+        return bool(entry.get("chunks"))
+    return entry_answered_count(entry) < total
+
+
+def prepare_checkpoint_paper(checkpoint, url, provider_id, model, thinking, questions):
+    with _CHECKPOINT_LOCK:
+        entry = ensure_checkpoint_entry(checkpoint, url, provider_id, model, thinking, questions)
+        entry["total_questions"] = len(questions or [])
+        entry["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        save_checkpoint(checkpoint)
+
+
+def mark_checkpoint_chunk_failed(checkpoint, url, provider_id, model, thinking, questions, chunk, message):
+    slot_key = chunk_slot_key(chunk)
+    with _CHECKPOINT_LOCK:
+        entry = ensure_checkpoint_entry(checkpoint, url, provider_id, model, thinking, questions)
+        entry["total_questions"] = len(questions or [])
+        failed = entry.setdefault("failed_chunks", {})
+        failed[slot_key] = {
+            "fp": questions_fingerprint(chunk),
+            "error": str(message or "请求失败")[:500],
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        entry["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        save_checkpoint(checkpoint)
+
+
+def filter_urls_retry_failed(checkpoint, urls, provider_id, model, thinking):
+    pending = []
+    for url in urls:
+        entry = checkpoint_entry_loose(checkpoint, url, provider_id, model, thinking)
+        if entry_is_pending(entry):
+            pending.append(url)
+    return pending
+
+
+def checkpoint_pending_items(checkpoint, urls, provider_id, model, thinking):
+    items = []
+    for url in urls:
+        entry = checkpoint_entry_loose(checkpoint, url, provider_id, model, thinking)
+        if not entry_is_pending(entry):
+            continue
+        total = int(entry.get("total_questions") or 0)
+        answered = entry_answered_count(entry)
+        failed = entry.get("failed_chunks") or {}
+        items.append(
+            {
+                "url": str(url or "").strip(),
+                "answered": answered,
+                "total": total,
+                "failedGroups": len(failed),
+            }
+        )
+    return items
 
 
 def clear_checkpoint_urls(urls):
