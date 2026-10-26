@@ -28,7 +28,7 @@ def load_token() -> str:
 def main():
     tag = sys.argv[1] if len(sys.argv) > 1 else "v1.7.8"
     version = tag.lstrip("v")
-    body = sys.argv[2] if len(sys.argv) > 2 else f"## {tag}\n\n- 全局快捷键 Ctrl+Shift+C 复制当前题答案（贴边做题少失焦）\n- 修复 1.7.7 安装包未打入快捷键相关前端资源\n"
+    body = sys.argv[2] if len(sys.argv) > 2 else f"## {tag}\n\n- 答案显示：仅答案 / 含解析（本地记住）\n- 答案字号：小 / 中 / 大\n- 贴边时「仅答案」隐藏题干与选项，窄栏更清爽\n"
     if not SETUP.is_file():
         raise SystemExit(f"缺少安装包: {SETUP}")
 

@@ -169,6 +169,34 @@ body {
   margin-top: 0;
 }
 
+.display-field {
+  margin-top: 12px;
+}
+
+.page--answer-font-small .q-list .stem,
+.page--answer-font-small .q-list .answer,
+.page--answer-font-small .q-list .answer-text,
+.page--answer-font-small .q-list .option,
+.page--answer-font-small .q-list .reason {
+  font-size: 12px;
+}
+
+.page--answer-font-small .q-list .option-mark {
+  font-size: 11px;
+}
+
+.page--answer-font-large .q-list .stem,
+.page--answer-font-large .q-list .answer,
+.page--answer-font-large .q-list .answer-text,
+.page--answer-font-large .q-list .option,
+.page--answer-font-large .q-list .reason {
+  font-size: 16px;
+}
+
+.page--answer-font-large .q-list .option-mark {
+  font-size: 14px;
+}
+
 .q-card {
   cursor: pointer;
   transition: box-shadow 0.15s ease, border-color 0.15s ease;

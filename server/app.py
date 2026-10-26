@@ -92,6 +92,11 @@ class DockIn(BaseModel):
     alwaysOnTop: bool = True
 
 
+class DisplayIn(BaseModel):
+    showReason: bool | None = None
+    fontSize: str | None = None
+
+
 class NamesIn(BaseModel):
     names: list[str] = []
 
@@ -155,6 +160,11 @@ def set_save(body: SaveIn):
 @app.post("/api/settings/dock")
 def set_dock(body: DockIn):
     return api.set_dock_pref(body.side, body.width, body.alwaysOnTop)
+
+
+@app.post("/api/settings/display")
+def set_display(body: DisplayIn):
+    return api.set_display_pref(body.showReason, body.fontSize)
 
 
 @app.get("/api/answers")

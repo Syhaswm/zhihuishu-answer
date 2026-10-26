@@ -55,6 +55,17 @@ const dockWidth = ref(DOCK_WIDTH_DEFAULT);
 const dockOnTop = ref(true);
 const showDockSettings = ref(true);
 const dockShowAllQuestions = ref(false);
+const answerShowReason = ref(false);
+const answerFontSize = ref("medium");
+const answerDisplayOptions = [
+  { value: "answers", label: "仅答案" },
+  { value: "reason", label: "含解析" },
+];
+const answerFontOptions = [
+  { value: "small", label: "小" },
+  { value: "medium", label: "中" },
+  { value: "large", label: "大" },
+];
 const dockModeOptions = [
   { value: "off", label: "常规窗口" },
   { value: "left", label: "贴在屏幕左侧" },
@@ -76,6 +87,26 @@ const visibleFiles = computed(() =>
   showAllFiles.value ? answerFiles.value : answerFiles.value.slice(0, 3)
 );
 const isDocked = computed(() => dockSide.value === "left" || dockSide.value === "right");
+
+const answerDisplayMode = computed(() => (answerShowReason.value ? "reason" : "answers"));
+
+const pageDisplayClasses = computed(() => ({
+  "page--dock": isDocked.value,
+  "page--answer-font-small": answerFontSize.value === "small",
+  "page--answer-font-large": answerFontSize.value === "large",
+}));
+
+function showQuestionStem() {
+  return !isDocked.value;
+}
+
+function showQuestionOptions(question) {
+  return !isDocked.value && question?.options?.length;
+}
+
+function showQuestionReason(question) {
+  return answerShowReason.value && question?.reason;
+}
 
 const dockQuestions = computed(() => {
   const paper = currentPaper.value;
@@ -279,6 +310,9 @@ async function loadSettings() {
   dockSide.value = data.dockSide || "off";
   dockWidth.value = data.dockWidth || DOCK_WIDTH_DEFAULT;
   dockOnTop.value = data.dockOnTop !== false;
+  answerShowReason.value = data.answerShowReason === true;
+  const font = String(data.answerFontSize || "medium").toLowerCase();
+  answerFontSize.value = font === "small" || font === "large" ? font : "medium";
   showDockSettings.value = !isDocked.value;
   if (isDocked.value) {
     try {
@@ -315,6 +349,25 @@ async function changeDockOnTop(event) {
     await applyDockLayout(dockSide.value, dockWidth.value, dockOnTop.value);
   } catch (err) {
     Toast.warning(err.message || "置顶设置失败");
+  }
+}
+
+async function changeAnswerDisplay(value) {
+  answerShowReason.value = value === "reason";
+  try {
+    await api.setDisplayPref(answerShowReason.value, answerFontSize.value);
+  } catch (err) {
+    Toast.warning(err.message || "显示设置保存失败");
+  }
+}
+
+async function changeAnswerFontSize(value) {
+  const next = value === "small" || value === "large" ? value : "medium";
+  answerFontSize.value = next;
+  try {
+    await api.setDisplayPref(answerShowReason.value, next);
+  } catch (err) {
+    Toast.warning(err.message || "字号设置保存失败");
   }
 }
 
@@ -684,7 +737,7 @@ async function start() {
 </script>
 
 <template>
-  <div ref="scroller" class="page" :class="{ 'page--dock': isDocked }">
+  <div ref="scroller" class="page" :class="pageDisplayClasses">
     <div class="shell">
       <header class="brand">
         <img class="logo" src="/icon.png" alt="" />
@@ -736,6 +789,27 @@ async function start() {
             <div class="save-hint">关闭后仍贴边，但可能被其他窗口挡住。</div>
           </div>
           <Switch :checked="dockOnTop" @change="changeDockOnTop" />
+        </div>
+        <div class="field display-field">
+          <div class="field-label">答案显示</div>
+          <Select
+            :value="answerDisplayMode"
+            :optionList="answerDisplayOptions"
+            style="width: 100%"
+            @change="changeAnswerDisplay"
+          />
+          <div class="save-hint">
+            仅答案：常规窗口仍显示题干；贴边时只保留题号与答案行。含解析：在答案下方显示模型给出的说明。
+          </div>
+        </div>
+        <div class="field display-field">
+          <div class="field-label">答案字号</div>
+          <Select
+            :value="answerFontSize"
+            :optionList="answerFontOptions"
+            style="width: 100%"
+            @change="changeAnswerFontSize"
+          />
         </div>
       </Card>
 
@@ -921,8 +995,8 @@ async function start() {
               <Tag size="small" color="blue">{{ question.type }}</Tag>
               <Tag v-if="question.score" size="small">{{ question.score }}分</Tag>
             </div>
-            <div class="stem">{{ question.stem }}</div>
-            <div v-if="question.options.length" class="options">
+            <div v-if="showQuestionStem()" class="stem">{{ question.stem }}</div>
+            <div v-if="showQuestionOptions(question)" class="options">
               <div
                 v-for="option in question.options"
                 :key="option"
@@ -956,7 +1030,7 @@ async function start() {
                 复制
               </Button>
             </div>
-            <div v-if="question.reason" class="reason">{{ question.reason }}</div>
+            <div v-if="showQuestionReason(question)" class="reason">{{ question.reason }}</div>
           </Card>
         </div>
         <Pagination
@@ -1013,6 +1087,10 @@ async function start() {
         <h2>窄栏导航（贴边做题）</h2>
         <p>
           贴在左或右侧时，答案区上方有「上一题 / 下一题」和下拉选题号，默认只显示当前一题，少在长列表里滚动。多空填空题另有「上一空 / 下一空」。需要对照多题时可点「展开全部题目」。
+        </p>
+        <h2>答案显示与字号</h2>
+        <p>
+          在「贴边做题」卡片里可选「仅答案」或「含解析」，以及小/中/大字号。设置会记住，下次打开仍生效。贴边时「仅答案」会隐藏题干与选项，只留题号和答案行，方便窄栏对照。
         </p>
         <div class="help-close">
           <Button theme="solid" type="primary" @click="helpOpen = false">知道了</Button>

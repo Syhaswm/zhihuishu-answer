@@ -112,6 +112,14 @@ export function setDockPref(side, width, alwaysOnTop) {
   });
 }
 
+export function setDisplayPref(showReason, fontSize) {
+  return request("/api/settings/display", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ showReason, fontSize }),
+  });
+}
+
 export function listAnswers() {
   return request("/api/answers");
 }

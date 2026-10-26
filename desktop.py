@@ -145,6 +145,9 @@ class Api:
         except (TypeError, ValueError):
             dock_width = 380
         dock_width = min(560, max(300, dock_width))
+        font_size = str(pref.get("answerFontSize") or "medium").lower()
+        if font_size not in ("small", "medium", "large"):
+            font_size = "medium"
         return {
             "apiKey": current_key,
             "keys": keys,
@@ -158,8 +161,26 @@ class Api:
             "dockSide": dock_side,
             "dockWidth": dock_width,
             "dockOnTop": bool(pref.get("dockOnTop", True)),
+            "answerShowReason": bool(pref.get("answerShowReason", False)),
+            "answerFontSize": font_size,
             "providers": answer.PROVIDERS,
             "files": self._answer_files(),
+        }
+
+    def set_display_pref(self, show_reason=None, font_size=None):
+        data = self._read_pref()
+        if show_reason is not None:
+            data["answerShowReason"] = bool(show_reason)
+        if font_size is not None:
+            size = str(font_size).lower()
+            if size not in ("small", "medium", "large"):
+                size = "medium"
+            data["answerFontSize"] = size
+        self._pref_path().write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        return {
+            "ok": True,
+            "answerShowReason": bool(data.get("answerShowReason", False)),
+            "answerFontSize": str(data.get("answerFontSize") or "medium"),
         }
 
     def set_dock_pref(self, side, width=380, always_on_top=True):
