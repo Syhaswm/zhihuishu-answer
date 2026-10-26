@@ -26,6 +26,52 @@ struct DockState {
     active: Mutex<bool>,
 }
 
+fn normalize_opacity(percent: u8) -> u8 {
+    match percent {
+        100 => 100,
+        95 => 95,
+        90 => 90,
+        _ => 85,
+    }
+}
+
+fn apply_window_opacity(window: &WebviewWindow, percent: u8) -> Result<(), String> {
+    let percent = normalize_opacity(percent);
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::COLORREF;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetWindowLongPtrW, SetLayeredWindowAttributes, SetWindowLongPtrW, GWL_EXSTYLE,
+            LWA_ALPHA, WS_EX_LAYERED,
+        };
+        let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+        let alpha = if percent >= 100 {
+            255u8
+        } else {
+            ((percent as f32 / 100.0) * 255.0).round() as u8
+        };
+        unsafe {
+            let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED.0 as isize);
+            SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_ALPHA)
+                .map_err(|e| format!("设置透明度失败: {e}"))?;
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        if percent < 100 {
+            return Err("当前系统暂不支持窗口透明度".into());
+        }
+        Ok(())
+    }
+}
+
+#[tauri::command]
+fn set_window_opacity(window: WebviewWindow, opacity: u8) -> Result<(), String> {
+    apply_window_opacity(&window, opacity)
+}
+
 fn random_token() -> String {
     let mut bytes = [0u8; 32];
     getrandom::getrandom(&mut bytes).expect("无法生成访问口令");
@@ -74,6 +120,7 @@ fn dock_apply(
     side: String,
     width: u32,
     always_on_top: bool,
+    opacity: u8,
 ) -> Result<(), String> {
     let side = side.to_lowercase();
     if side != "left" && side != "right" {
@@ -115,6 +162,7 @@ fn dock_apply(
     window
         .set_always_on_top(always_on_top)
         .map_err(|e| e.to_string())?;
+    apply_window_opacity(&window, opacity)?;
     *active = true;
     Ok(())
 }
@@ -154,6 +202,7 @@ fn dock_restore(window: WebviewWindow, state: tauri::State<DockState>) -> Result
             .set_size(PhysicalSize::new(1080, 800))
             .map_err(|e| e.to_string())?;
     }
+    apply_window_opacity(&window, 100)?;
     *active = false;
     Ok(())
 }
@@ -270,7 +319,8 @@ pub fn run() {
             api_token,
             app_version,
             dock_apply,
-            dock_restore
+            dock_restore,
+            set_window_opacity
         ])
         .setup(|_app| Ok(()))
         .build(tauri::generate_context!())

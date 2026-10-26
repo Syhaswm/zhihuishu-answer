@@ -90,6 +90,7 @@ class DockIn(BaseModel):
     side: str = "off"
     width: int = 380
     alwaysOnTop: bool = True
+    opacity: int | None = None
 
 
 class DisplayIn(BaseModel):
@@ -159,7 +160,7 @@ def set_save(body: SaveIn):
 
 @app.post("/api/settings/dock")
 def set_dock(body: DockIn):
-    return api.set_dock_pref(body.side, body.width, body.alwaysOnTop)
+    return api.set_dock_pref(body.side, body.width, body.alwaysOnTop, body.opacity)
 
 
 @app.post("/api/settings/display")

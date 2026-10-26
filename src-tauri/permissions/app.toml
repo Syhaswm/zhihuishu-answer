@@ -11,4 +11,4 @@ commands.allow = ["app_version"]
 [[permission]]
 identifier = "allow-dock-window"
 description = "贴边做题模式调整窗口"
-commands.allow = ["dock_apply", "dock_restore"]
+commands.allow = ["dock_apply", "dock_restore", "set_window_opacity"]

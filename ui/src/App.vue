@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { BackTop, Banner, Button, Card, Checkbox, Input, Modal, Pagination, Select, Switch, Tag, TextArea, Toast } from "@kousum/semi-ui-vue";
 import * as api from "./api";
-import { applyDockLayout, DOCK_WIDTH_DEFAULT } from "./dock";
+import { applyDockLayout, applyWindowOpacity, DOCK_WIDTH_DEFAULT } from "./dock";
 import { registerCopyHotkey, unregisterCopyHotkey, writeClipboard } from "./hotkey";
 
 const url = ref("");
@@ -53,6 +53,13 @@ const keyPage = "https://platform.deepseek.com/api_keys";
 const dockSide = ref("off");
 const dockWidth = ref(DOCK_WIDTH_DEFAULT);
 const dockOnTop = ref(true);
+const dockOpacity = ref(100);
+const dockOpacityOptions = [
+  { value: 100, label: "不透明" },
+  { value: 95, label: "95%" },
+  { value: 90, label: "90%" },
+  { value: 85, label: "85%（最透）" },
+];
 const showDockSettings = ref(true);
 const dockShowAllQuestions = ref(false);
 const answerShowReason = ref(false);
@@ -310,17 +317,26 @@ async function loadSettings() {
   dockSide.value = data.dockSide || "off";
   dockWidth.value = data.dockWidth || DOCK_WIDTH_DEFAULT;
   dockOnTop.value = data.dockOnTop !== false;
+  dockOpacity.value = normalizeDockOpacity(data.dockOpacity);
   answerShowReason.value = data.answerShowReason === true;
   const font = String(data.answerFontSize || "medium").toLowerCase();
   answerFontSize.value = font === "small" || font === "large" ? font : "medium";
   showDockSettings.value = !isDocked.value;
   if (isDocked.value) {
     try {
-      await applyDockLayout(dockSide.value, dockWidth.value, dockOnTop.value);
+      await applyDockLayout(dockSide.value, dockWidth.value, dockOnTop.value, dockOpacity.value);
     } catch (err) {
       Toast.warning(err.message || "贴边模式没能应用，请再选一次。");
     }
   }
+}
+
+function normalizeDockOpacity(value) {
+  const n = Number(value) || 100;
+  if (n >= 100) return 100;
+  if (n >= 95) return 95;
+  if (n >= 90) return 90;
+  return 85;
 }
 
 async function changeDockSide(value) {
@@ -328,8 +344,8 @@ async function changeDockSide(value) {
   dockSide.value = next;
   showDockSettings.value = next === "off";
   try {
-    await api.setDockPref(next, dockWidth.value, dockOnTop.value);
-    await applyDockLayout(next, dockWidth.value, dockOnTop.value);
+    await api.setDockPref(next, dockWidth.value, dockOnTop.value, dockOpacity.value);
+    await applyDockLayout(next, dockWidth.value, dockOnTop.value, dockOpacity.value);
     if (next === "off") {
       Toast.success("已恢复常规窗口");
     } else {
@@ -345,10 +361,22 @@ async function changeDockOnTop(event) {
   dockOnTop.value = isChecked(event);
   if (!isDocked.value) return;
   try {
-    await api.setDockPref(dockSide.value, dockWidth.value, dockOnTop.value);
-    await applyDockLayout(dockSide.value, dockWidth.value, dockOnTop.value);
+    await api.setDockPref(dockSide.value, dockWidth.value, dockOnTop.value, dockOpacity.value);
+    await applyDockLayout(dockSide.value, dockWidth.value, dockOnTop.value, dockOpacity.value);
   } catch (err) {
     Toast.warning(err.message || "置顶设置失败");
+  }
+}
+
+async function changeDockOpacity(value) {
+  dockOpacity.value = normalizeDockOpacity(value);
+  try {
+    await api.setDockPref(dockSide.value, dockWidth.value, dockOnTop.value, dockOpacity.value);
+    if (isDocked.value) {
+      await applyWindowOpacity(dockOpacity.value);
+    }
+  } catch (err) {
+    Toast.warning(err.message || "透明度设置失败");
   }
 }
 
@@ -790,6 +818,16 @@ async function start() {
           </div>
           <Switch :checked="dockOnTop" @change="changeDockOnTop" />
         </div>
+        <div v-if="isDocked" class="field display-field">
+          <div class="field-label">窗口透明度</div>
+          <Select
+            :value="dockOpacity"
+            :optionList="dockOpacityOptions"
+            style="width: 100%"
+            @change="changeDockOpacity"
+          />
+          <div class="save-hint">略透明可看到背后页面，文字可能更难辨认。恢复常规窗口会自动回到不透明。</div>
+        </div>
         <div class="field display-field">
           <div class="field-label">答案显示</div>
           <Select
@@ -1091,6 +1129,10 @@ async function start() {
         <h2>答案显示与字号</h2>
         <p>
           在「贴边做题」卡片里可选「仅答案」或「含解析」，以及小/中/大字号。设置会记住，下次打开仍生效。贴边时「仅答案」会隐藏题干与选项，只留题号和答案行，方便窄栏对照。
+        </p>
+        <h2>窗口透明度（贴边）</h2>
+        <p>
+          贴在左或右侧时可选 95% / 90% / 85% 略透明，便于同时看到浏览器里的题目。透明度仅 Windows 贴边生效；切回常规窗口会恢复不透明。
         </p>
         <div class="help-close">
           <Button theme="solid" type="primary" @click="helpOpen = false">知道了</Button>

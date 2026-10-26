@@ -104,11 +104,15 @@ export function setSaveAnswers(enabled) {
   });
 }
 
-export function setDockPref(side, width, alwaysOnTop) {
+export function setDockPref(side, width, alwaysOnTop, opacity) {
+  const payload = { side, width, alwaysOnTop };
+  if (opacity !== undefined && opacity !== null) {
+    payload.opacity = opacity;
+  }
   return request("/api/settings/dock", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ side, width, alwaysOnTop }),
+    body: JSON.stringify(payload),
   });
 }
 

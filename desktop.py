@@ -145,6 +145,7 @@ class Api:
         except (TypeError, ValueError):
             dock_width = 380
         dock_width = min(560, max(300, dock_width))
+        dock_opacity = self._normalize_dock_opacity(pref.get("dockOpacity", 100))
         font_size = str(pref.get("answerFontSize") or "medium").lower()
         if font_size not in ("small", "medium", "large"):
             font_size = "medium"
@@ -161,6 +162,7 @@ class Api:
             "dockSide": dock_side,
             "dockWidth": dock_width,
             "dockOnTop": bool(pref.get("dockOnTop", True)),
+            "dockOpacity": dock_opacity,
             "answerShowReason": bool(pref.get("answerShowReason", False)),
             "answerFontSize": font_size,
             "providers": answer.PROVIDERS,
@@ -183,7 +185,21 @@ class Api:
             "answerFontSize": str(data.get("answerFontSize") or "medium"),
         }
 
-    def set_dock_pref(self, side, width=380, always_on_top=True):
+    @staticmethod
+    def _normalize_dock_opacity(value):
+        try:
+            percent = int(value)
+        except (TypeError, ValueError):
+            percent = 100
+        if percent >= 100:
+            return 100
+        if percent >= 95:
+            return 95
+        if percent >= 90:
+            return 90
+        return 85
+
+    def set_dock_pref(self, side, width=380, always_on_top=True, opacity=None):
         side = str(side or "off").lower()
         if side not in ("off", "left", "right"):
             side = "off"
@@ -196,12 +212,15 @@ class Api:
         data["dockSide"] = side
         data["dockWidth"] = width
         data["dockOnTop"] = bool(always_on_top)
+        if opacity is not None:
+            data["dockOpacity"] = self._normalize_dock_opacity(opacity)
         self._pref_path().write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         return {
             "ok": True,
             "dockSide": side,
             "dockWidth": width,
             "dockOnTop": bool(always_on_top),
+            "dockOpacity": self._normalize_dock_opacity(data.get("dockOpacity", 100)),
         }
 
     def set_save_answers(self, enabled):
