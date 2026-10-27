@@ -601,13 +601,26 @@ class Api:
             return {"ok": False, "error": str(exc)}
         return result
 
+    def _attach_fail(self, payload, exc=None):
+        info = answer.classify_fail(exc if exc is not None else payload.get("error"))
+        payload["failKind"] = info["failKind"]
+        payload["failTitle"] = info["failTitle"]
+        payload["failNext"] = info["failNext"]
+        if not payload.get("error"):
+            payload["error"] = info["error"]
+        return payload
+
     def _failed_paper(self, index, url, exc):
+        info = answer.classify_fail(exc)
         return {
             "ok": False,
             "url": url,
             "title": f"第 {index + 1} 份没有取到",
             "course": "",
-            "error": str(exc or "没有返回题目"),
+            "error": info["error"],
+            "failKind": info["failKind"],
+            "failTitle": info["failTitle"],
+            "failNext": info["failNext"],
             "questions": [],
             "text": "",
             "file": "",
@@ -674,7 +687,7 @@ class Api:
     ):
         urls = answer.split_homework_urls(text)
         if not urls:
-            return {"ok": False, "error": "请输入作业页地址，每行一个。", "papers": []}
+            return self._attach_fail({"ok": False, "error": "请输入作业页地址，每行一个。", "papers": []})
         try:
             provider_info, endpoint, model_name = answer.resolve_provider(provider, model, base_url)
             if provider_info["needsKey"] and not str(api_key or "").strip():
@@ -682,7 +695,7 @@ class Api:
             self._save_model_pref(provider_info["id"], model_name, endpoint, api_key, thinking)
             api_key, cookie = self._prepare_solve(api_key)
         except Exception as exc:
-            return {"ok": False, "error": str(exc), "papers": []}
+            return self._attach_fail({"ok": False, "error": str(exc), "papers": []}, exc)
         save_files = self._save_answers()
         folder = answer.ROOT / "答案" if save_files else None
         checkpoint = answer.load_checkpoint()
@@ -696,12 +709,14 @@ class Api:
                 bool(thinking),
             )
             if not pending_urls:
-                return {
-                    "ok": False,
-                    "error": "没有需要续答的作业。请确认地址与上次一致、模型未改，且上次未答全或存在失败题组。",
-                    "papers": [],
-                    "retryFailedOnly": True,
-                }
+                return self._attach_fail(
+                    {
+                        "ok": False,
+                        "error": "没有需要续答的作业。请确认地址与上次一致、模型未改，且上次未答全或存在失败题组。",
+                        "papers": [],
+                        "retryFailedOnly": True,
+                    }
+                )
             urls = pending_urls
             self._progress(f"仅重试失败：{len(urls)} 份未答全，跳过已完成的作业…")
         total = len(urls)
@@ -850,6 +865,16 @@ class Api:
                 hint += "。可点「仅重试失败」或开启断点续答后再获取，只补未完成的题组。"
                 result["error"] = str(err) if err else hint
                 result["checkpointHint"] = hint
+                if err:
+                    self._attach_fail(result, err)
+                    if result.get("failKind") in ("other", "model", "homework"):
+                        result["failKind"] = "partial"
+                        result["failTitle"] = "这份作业未答全"
+                        result["failNext"] = hint
+                else:
+                    result["failKind"] = "partial"
+                    result["failTitle"] = "这份作业未答全"
+                    result["failNext"] = hint
             elif resume:
                 answer.clear_checkpoint_url(checkpoint, url)
             papers.append(result)
@@ -880,7 +905,7 @@ class Api:
             summary = resume_note + f"完成 {done} 份。每份答案单独保存在「答案」文件夹。"
         usage_text = answer.format_session_usage(session_usage)
         self._progress(summary if not usage_text else f"{summary}\n{usage_text}")
-        return {
+        payload = {
             "ok": done > 0 or partial > 0,
             "error": "" if (done or partial) else summary,
             "papers": papers,
@@ -892,6 +917,14 @@ class Api:
             "retryFailedOnly": bool(retry_failed_only),
             "retriedChunks": retried_chunks,
         }
+        sample = next((paper for paper in papers if paper.get("failKind")), None)
+        if sample:
+            payload["failKind"] = sample.get("failKind") or ""
+            payload["failTitle"] = sample.get("failTitle") or ""
+            payload["failNext"] = sample.get("failNext") or ""
+        elif not payload["ok"]:
+            self._attach_fail(payload)
+        return payload
 
 
 def _serve(directory):

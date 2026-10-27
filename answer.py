@@ -948,7 +948,18 @@ def ask_chunk(api_key, questions, endpoint=None, model=None, provider_name="Deep
     except ValueError:
         raise RuntimeError(f"{label} 返回的不是 JSON（HTTP {resp.status_code}）")
     if not resp.ok:
-        message = ((data.get("error") or {}).get("message")) or resp.text[:300]
+        err = data.get("error") if isinstance(data.get("error"), dict) else {}
+        message = err.get("message") or resp.text[:300]
+        code = str(err.get("code") or "")
+        low = f"{message} {code}".lower()
+        if resp.status_code == 429 or "rate limit" in low or "too many" in low or "频繁" in message:
+            raise RuntimeError(f"{label} 请求过于频繁（429）：{message}")
+        if any(word in low for word in ("insufficient_quota", "insufficient_balance", "billing")) or any(
+            word in message for word in ("余额", "额度不足", "欠费", "充值")
+        ):
+            raise RuntimeError(f"{label} 余额或额度不足：{message}")
+        if resp.status_code in (401, 403) and any(word in low for word in ("api key", "apikey", "auth", "unauthorized", "token")):
+            raise RuntimeError(f"{label} API Key 无效或无权访问：{message}")
         raise RuntimeError(f"{label} {resp.status_code}：{message}")
     content = (((data.get("choices") or [{}])[0].get("message") or {}).get("content")) or ""
     parsed = parse_model_json(content)
@@ -1031,6 +1042,49 @@ def align_to_options(options, raw):
         elif len(fuzzy) == 1:
             add(fuzzy[0])
     return chosen or pieces
+
+
+FAIL_HINTS = {
+    "login": ("登录已失效", "点「切换账号」，用正在做这份作业的智慧树账号重新登录后再获取。"),
+    "captcha": ("平台要求验证", "先在浏览器打开这份作业页完成验证码，再回到软件获取答案。"),
+    "rate_limit": ("请求过于频繁", "先停几分钟，不要连点。然后点「仅重试失败」只补未完成题组。"),
+    "balance": ("模型余额或额度不足", "到对应厂商控制台充值，或换一把有额度的 Key，再点「仅重试失败」。"),
+    "apikey": ("API Key 无效", "核对当前模型的 Key 是否填对、是否过期，改完后再获取。"),
+    "network": ("连不上接口", "检查网络、系统代理，本地模型要先启动，然后重试。"),
+    "homework": ("作业地址或账号不匹配", "回到正在做题的页面复制整段地址，并确认登录的是同一账号。"),
+    "model": ("模型接口报错", "看下方原文。可换模型，或稍后再点「仅重试失败」。"),
+    "partial": ("这份作业未答全", "点「仅重试失败」只补未完成题组，不必整份重来。"),
+    "other": ("获取失败", "看下方原文。可稍后重试，或点「仅重试失败」。"),
+}
+
+
+def classify_fail(exc):
+    text = str(exc or "").strip()
+    low = text.casefold()
+    kind = "other"
+    if any(word in text for word in ("登录已失效", "未登录", "登陆", "切换账号", "还没有读到")):
+        kind = "login"
+    elif "验证码" in text or ("网站要求验证" in text):
+        kind = "captcha"
+    elif "429" in text or "过于频繁" in text or "rate limit" in low or "too many" in low:
+        kind = "rate_limit"
+    elif any(word in text for word in ("余额", "额度不足", "insufficient_quota")) or "quota" in low:
+        kind = "balance"
+    elif "API Key" in text or "apikey" in low or "invalid api" in low or "无权访问" in text:
+        kind = "apikey"
+    elif any(word in text for word in ("连不上", "超时", "Timed out", "timeout")) or "connection" in low:
+        kind = "network"
+    elif any(word in text for word in ("不属于", "作业地址", "没有认出", "没有题目", "正在做", "参数")):
+        kind = "homework"
+    elif re.search(r"\b(400|401|403|500|502|503)\b", text):
+        kind = "model"
+    title, nxt = FAIL_HINTS[kind]
+    return {
+        "failKind": kind,
+        "failTitle": title,
+        "failNext": nxt,
+        "error": text or "没有返回结果",
+    }
 
 
 CHECKPOINT_VERSION = 1

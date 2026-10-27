@@ -179,6 +179,16 @@ body {
   color: var(--semi-color-warning, #b88230);
 }
 
+.fail-next {
+  margin: 6px 0 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--semi-color-warning-light-default, #fff7e8);
+  color: var(--semi-color-warning, #b88230);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .page--answer-font-small .q-list .stem,
 .page--answer-font-small .q-list .answer,
 .page--answer-font-small .q-list .answer-text,

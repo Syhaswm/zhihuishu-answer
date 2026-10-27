@@ -33,6 +33,9 @@ const loggingIn = ref(false);
 const accountName = ref("");
 const status = ref("先点登录账号，在弹出的窗口登录。之后获取答案会一直用这个账号。");
 const error = ref("");
+const batchFailKind = ref("");
+const batchFailTitle = ref("");
+const batchFailNext = ref("");
 const papers = ref([]);
 const saveAnswers = ref(true);
 const resumeCheckpoint = ref(true);
@@ -726,6 +729,19 @@ function paperTitle(paper) {
   return paper.course ? `${paper.course} · ${paper.title}` : paper.title || "作业";
 }
 
+function failBannerType(kind) {
+  if (kind === "rate_limit" || kind === "partial") return "warning";
+  return "danger";
+}
+
+function paperFailText(paper) {
+  if (!paper) return "";
+  if (paper.failTitle && paper.error && paper.error !== paper.failTitle) {
+    return `${paper.failTitle}：${paper.error}`;
+  }
+  return paper.failTitle || paper.checkpointHint || paper.error || "";
+}
+
 async function refreshCheckpointPending() {
   if (!url.value.trim()) {
     pendingRetryCount.value = 0;
@@ -770,6 +786,9 @@ async function clearCheckpoint() {
 
 async function runSolve(retryFailedOnly = false) {
   error.value = "";
+  batchFailKind.value = "";
+  batchFailTitle.value = "";
+  batchFailNext.value = "";
   papers.value = [];
   sessionUsageText.value = "";
   if (!url.value.trim()) {
@@ -808,10 +827,15 @@ async function runSolve(retryFailedOnly = false) {
     if (isDocked.value) ensureDockSelection();
     sessionUsageText.value = resp.usageText || "";
     status.value = resp.summary || "";
+    batchFailKind.value = resp.failKind || "";
+    batchFailTitle.value = resp.failTitle || "";
+    batchFailNext.value = resp.failNext || "";
     await refreshFiles();
     await refreshCheckpointPending();
     if (!resp.ok && !papers.value.length) {
-      error.value = resp.error || "没有返回结果";
+      error.value = resp.failTitle
+        ? `${resp.failTitle}：${resp.error || "没有返回结果"}`
+        : resp.error || "没有返回结果";
     }
   } catch (err) {
     error.value = err.message || String(err);
@@ -1052,7 +1076,8 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
         </div>
       </Card>
 
-      <Banner v-if="error" class="alert" type="danger" :description="error" />
+      <Banner v-if="error" class="alert" :type="failBannerType(batchFailKind)" :description="error" />
+      <p v-if="error && batchFailNext" class="fail-next">下一步：{{ batchFailNext }}</p>
 
       <section v-if="currentPaper" ref="paperAnchor" class="paper">
         <Pagination
@@ -1074,17 +1099,12 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
           <Button v-if="currentPaper.ok" size="small" @click="copyText(currentPaper.text)">复制本份</Button>
         </div>
         <Banner
-          v-if="!currentPaper.ok && currentPaper.checkpointHint"
+          v-if="!currentPaper.ok && paperFailText(currentPaper)"
           class="alert"
-          type="warning"
-          :description="currentPaper.checkpointHint"
+          :type="failBannerType(currentPaper.failKind)"
+          :description="paperFailText(currentPaper)"
         />
-        <Banner
-          v-else-if="!currentPaper.ok && currentPaper.error"
-          class="alert"
-          type="danger"
-          :description="currentPaper.error"
-        />
+        <p v-if="!currentPaper.ok && currentPaper.failNext" class="fail-next">下一步：{{ currentPaper.failNext }}</p>
         <div v-if="isDocked && currentPaper.questions?.length && dockQuestions.length" class="dock-nav">
           <Button size="small" :disabled="dockQuestionIndex <= 0" @click="goPrevQuestion">上一题</Button>
           <Select
@@ -1236,6 +1256,10 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
         <h2>断点续答与仅重试失败</h2>
         <p>
           题目按 4 题一组调用模型。开启「断点续答」后，每组成功会写入本机 checkpoint.json；再次「获取答案」且题干未变时会跳过已答组。失败的题组会单独记录，可点「仅重试失败」只处理未答全的作业、只请求未成功的题组（已完成的作业地址不会重复调模型）。换模型或关闭续答会重新全量请求。答全后断点自动清除，也可点「清除断点」。
+        </p>
+        <h2>失败分类提示</h2>
+        <p>
+          拉题或调模型失败时，会区分登录过期、验证码、请求过频、余额不足、Key 无效、网络、作业地址不匹配等，并给出简短「下一步」。未答全时优先点「仅重试失败」，不必整份重来。
         </p>
         <div class="help-close">
           <Button theme="solid" type="primary" @click="helpOpen = false">知道了</Button>
