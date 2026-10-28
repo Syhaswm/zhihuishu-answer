@@ -22,6 +22,7 @@ const usageNote = ref("");
 const usageConsole = ref("");
 const usageSupported = ref(false);
 const sessionUsageText = ref("");
+const sessionCacheText = ref("");
 const thinking = ref(false);
 const baseUrl = ref("https://api.deepseek.com/chat/completions");
 const providers = ref([
@@ -777,7 +778,7 @@ async function refreshCheckpointPending() {
 async function clearCheckpoint() {
   try {
     await api.clearSolveCheckpoint(url.value);
-    Toast.success(url.value.trim() ? "已清除地址框里作业的答题断点。" : "已清除本机全部答题断点。");
+    Toast.success(url.value.trim() ? "已清除地址框里作业的断点和题干缓存。" : "已清除本机全部断点和题干缓存。");
     await refreshCheckpointPending();
   } catch (err) {
     Toast.warning(err.message || "清除断点失败");
@@ -791,6 +792,7 @@ async function runSolve(retryFailedOnly = false) {
   batchFailNext.value = "";
   papers.value = [];
   sessionUsageText.value = "";
+  sessionCacheText.value = "";
   if (!url.value.trim()) {
     error.value = "请输入作业页地址，每行一个。";
     return;
@@ -826,7 +828,11 @@ async function runSolve(retryFailedOnly = false) {
     selectedPartIndex.value = 0;
     if (isDocked.value) ensureDockSelection();
     sessionUsageText.value = resp.usageText || "";
+    sessionCacheText.value = resp.cacheHint || "";
     status.value = resp.summary || "";
+    if (resp.cacheHint && !resp.changedQuestions && resp.reusedQuestions) {
+      Toast.success(resp.cacheHint);
+    }
     batchFailKind.value = resp.failKind || "";
     batchFailTitle.value = resp.failTitle || "";
     batchFailNext.value = resp.failNext || "";
@@ -1019,7 +1025,7 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
           <div>
             <div class="field-label">断点续答</div>
             <div class="save-hint">
-              每 4 题一组请求模型。中途失败或关闭软件后，开启此项再获取会跳过已成功的题组（保存在本机 checkpoint.json）。
+              每 4 题一组请求模型。中途失败或关闭软件后，开启此项再获取会跳过已成功的题组。同一作业题干未变会沿用上次答案，只重做变更题。
               <span v-if="pendingRetryHint" class="pending-retry-hint">{{ pendingRetryHint }}</span>
             </div>
           </div>
@@ -1041,6 +1047,7 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
           <Button :disabled="loading" @click="clearCheckpoint">清除断点</Button>
         </div>
         <div class="status">{{ status }}</div>
+        <div v-if="sessionCacheText" class="cache-session">{{ sessionCacheText }}</div>
         <div v-if="sessionUsageText" class="usage-session">{{ sessionUsageText }}</div>
       </Card>
 
@@ -1256,6 +1263,10 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
         <h2>断点续答与仅重试失败</h2>
         <p>
           题目按 4 题一组调用模型。开启「断点续答」后，每组成功会写入本机 checkpoint.json；再次「获取答案」且题干未变时会跳过已答组。失败的题组会单独记录，可点「仅重试失败」只处理未答全的作业、只请求未成功的题组（已完成的作业地址不会重复调模型）。换模型或关闭续答会重新全量请求。答全后断点自动清除，也可点「清除断点」。
+        </p>
+        <h2>题干指纹（沿用上次答案）</h2>
+        <p>
+          每道题按题干和选项做指纹。同一作业再次获取时，未变的题直接沿用上次答案，不消耗模型额度；只把题干有变或尚未缓存的题送给模型。关闭「断点续答」或点「清除断点」会清空缓存并全量重答。
         </p>
         <h2>失败分类提示</h2>
         <p>

@@ -28,7 +28,7 @@ def load_token() -> str:
 def main():
     tag = sys.argv[1] if len(sys.argv) > 1 else "v1.7.8"
     version = tag.lstrip("v")
-    body = sys.argv[2] if len(sys.argv) > 2 else f"## {tag}\n\n- 失败分类提示：登录过期、429、余额不足、验证码、Key 无效等\n- 界面给出简短「下一步」；未答全可点「仅重试失败」\n"
+    body = sys.argv[2] if len(sys.argv) > 2 else f"## {tag}\n\n- 题干指纹：未变沿用上次答案，不重复消耗额度\n- 只重做题干或选项有变的题目\n"
     if not SETUP.is_file():
         raise SystemExit(f"缺少安装包: {SETUP}")
 

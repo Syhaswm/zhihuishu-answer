@@ -300,6 +300,16 @@ body {
   line-height: 1.5;
 }
 
+.cache-session {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--semi-color-success-light-default, #e6f7ee);
+  color: var(--semi-color-success, #1b8a4a);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .thinking-row {
   margin-top: 12px;
 }

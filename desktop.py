@@ -655,7 +655,7 @@ class Api:
         if urls:
             answer.clear_checkpoint_urls(urls)
             return {"ok": True, "cleared": len(urls)}
-        answer.save_checkpoint({"version": answer.CHECKPOINT_VERSION, "entries": {}})
+        answer.save_checkpoint({"version": answer.CHECKPOINT_VERSION, "entries": {}, "cache": {}})
         return {"ok": True, "cleared": "all"}
 
     def checkpoint_pending(self, text, provider="deepseek", model="", base_url="", thinking=False):
@@ -725,6 +725,7 @@ class Api:
             checkpoint = answer.load_checkpoint()
         skipped_chunks = 0
         retried_chunks = 0
+        cache_stats = {"reused": 0, "changed": 0, "missing": 0}
         for url in urls:
             if answer.is_polymas_url(url):
                 cookie = self._sync_polymas(url, cookie)
@@ -743,8 +744,16 @@ class Api:
             if not exam:
                 continue
             paper_url = urls[index]
+            remaining = list(exam["questions"])
             entry = None
             if resume:
+                cached, remaining, stats = answer.lookup_question_cache(
+                    checkpoint, paper_url, exam["questions"]
+                )
+                found[index].update(cached)
+                cache_stats["reused"] += stats["reused"]
+                cache_stats["changed"] += stats["changed"]
+                cache_stats["missing"] += stats["missing"]
                 answer.prepare_checkpoint_paper(
                     checkpoint,
                     paper_url,
@@ -763,7 +772,8 @@ class Api:
                 )
                 if entry:
                     answer.merge_checkpoint_into_found(entry, found[index])
-            for chunk in answer.question_chunks(exam["questions"]):
+                remaining = [question for question in exam["questions"] if question["n"] not in found[index]]
+            for chunk in answer.question_chunks(remaining):
                 if resume and entry and answer.checkpoint_chunk_answers(entry, chunk):
                     skipped_chunks += 1
                     continue
@@ -774,6 +784,9 @@ class Api:
                 jobs.append((index, chunk))
         chunk_errors = {}
         session_usage = answer.empty_usage()
+        cache_hint = answer.format_cache_hint(cache_stats)
+        if cache_hint:
+            self._progress(cache_hint)
         if skipped_chunks:
             note = f"断点续答：跳过 {skipped_chunks} 组已答题目，待请求 {len(jobs)} 组"
             if retried_chunks:
@@ -851,6 +864,8 @@ class Api:
                 continue
             answer.apply_answers(exam, found[index])
             complete = answer.paper_answers_complete(found[index], exam)
+            if found[index]:
+                answer.save_question_cache(checkpoint, url, exam["questions"], found[index])
             result = answer.result_payload(exam, folder=folder, index=index + 1, save=save_files and complete)
             result["ok"] = complete
             result["url"] = url
@@ -881,10 +896,9 @@ class Api:
         done = sum(1 for paper in papers if paper.get("ok"))
         partial = sum(1 for paper in papers if not paper.get("ok") and paper.get("questions"))
         failed = total - done - partial
+        resume_note = cache_hint
         if skipped_chunks:
-            resume_note = f"断点续答跳过 {skipped_chunks} 组题目。"
-        else:
-            resume_note = ""
+            resume_note += f"断点续答跳过 {skipped_chunks} 组题目。"
         if not done and not partial:
             summary = "这几份作业都没有取到答案。"
         elif partial and not done:
@@ -916,6 +930,9 @@ class Api:
             "resume": bool(resume),
             "retryFailedOnly": bool(retry_failed_only),
             "retriedChunks": retried_chunks,
+            "reusedQuestions": cache_stats["reused"],
+            "changedQuestions": cache_stats["changed"],
+            "cacheHint": cache_hint,
         }
         sample = next((paper for paper in papers if paper.get("failKind")), None)
         if sample:

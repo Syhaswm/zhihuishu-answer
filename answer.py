@@ -1100,6 +1100,19 @@ def _checkpoint_sig(provider_id, model, thinking):
     return f"{provider_id}|{model or ''}|{int(bool(thinking))}"
 
 
+def question_fingerprint(question):
+    row = json.dumps(
+        {
+            "n": question.get("n"),
+            "stem": question.get("stem"),
+            "options": question.get("options") or [],
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return hashlib.sha256(row.encode("utf-8")).hexdigest()[:24]
+
+
 def questions_fingerprint(questions):
     digest = hashlib.sha256()
     for question in questions:
@@ -1131,6 +1144,8 @@ def load_checkpoint():
         return {"version": CHECKPOINT_VERSION, "entries": {}}
     if not isinstance(data.get("entries"), dict):
         data["entries"] = {}
+    if not isinstance(data.get("cache"), dict):
+        data["cache"] = {}
     return data
 
 
@@ -1325,6 +1340,74 @@ def checkpoint_pending_items(checkpoint, urls, provider_id, model, thinking):
     return items
 
 
+def lookup_question_cache(checkpoint, url, questions):
+    key = _checkpoint_url_key(url)
+    stored = ((checkpoint.get("cache") or {}).get(key) or {}).get("questions") or {}
+    found = {}
+    remaining = []
+    reused = 0
+    changed = 0
+    missing = 0
+    for question in questions:
+        n = int(question.get("n") or 0)
+        item = stored.get(str(n)) if isinstance(stored, dict) else None
+        if not isinstance(item, dict):
+            remaining.append(question)
+            missing += 1
+            continue
+        if item.get("fp") != question_fingerprint(question):
+            remaining.append(question)
+            changed += 1
+            continue
+        found[n] = {
+            "n": n,
+            "answer": item.get("answer"),
+            "reason": item.get("reason") or "",
+        }
+        reused += 1
+    return found, remaining, {"reused": reused, "changed": changed, "missing": missing}
+
+
+def save_question_cache(checkpoint, url, questions, found):
+    if not found:
+        return
+    key = _checkpoint_url_key(url)
+    with _CHECKPOINT_LOCK:
+        cache = checkpoint.setdefault("cache", {})
+        bucket = cache.setdefault(key, {"url": str(url or "").strip(), "questions": {}})
+        bucket["url"] = str(url or "").strip()
+        stored = bucket.setdefault("questions", {})
+        for question in questions:
+            n = int(question.get("n") or 0)
+            item = found.get(n)
+            if not n or not isinstance(item, dict):
+                continue
+            stored[str(n)] = {
+                "n": n,
+                "fp": question_fingerprint(question),
+                "answer": item.get("answer"),
+                "reason": item.get("reason") or "",
+            }
+        bucket["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        save_checkpoint(checkpoint)
+
+
+def format_cache_hint(stats):
+    reused = int((stats or {}).get("reused") or 0)
+    changed = int((stats or {}).get("changed") or 0)
+    missing = int((stats or {}).get("missing") or 0)
+    if reused and not changed and not missing:
+        return f"题干未变，沿用上次 {reused} 题，未调用模型。"
+    if reused and changed and not missing:
+        return f"沿用上次 {reused} 题，只重做 {changed} 题（题干有变）。"
+    if reused and missing:
+        extra = changed + missing
+        return f"沿用上次 {reused} 题，新解答 {extra} 题。"
+    if changed and not reused:
+        return f"题干有变，重做 {changed} 题。"
+    return ""
+
+
 def clear_checkpoint_urls(urls):
     checkpoint = load_checkpoint()
     keys = {_checkpoint_url_key(url) for url in urls if str(url or "").strip()}
@@ -1332,9 +1415,12 @@ def clear_checkpoint_urls(urls):
         return
     with _CHECKPOINT_LOCK:
         entries = checkpoint.get("entries") or {}
+        cache = checkpoint.get("cache") or {}
         for key in keys:
             entries.pop(key, None)
+            cache.pop(key, None)
         checkpoint["entries"] = entries
+        checkpoint["cache"] = cache
         save_checkpoint(checkpoint)
 
 
