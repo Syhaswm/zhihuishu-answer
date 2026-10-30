@@ -39,7 +39,7 @@ Copyright (C) 2026 Zephyr
 
 普通作业页路径里有 `/webExamList/dohomework/`。AI 教学中心作业页路径里有 `/exam-hub/` 和 `answer-homework`。
 
-更细的操作步骤见 [使用说明](使用说明.md)。发行版在 [Gitee Releases](https://gitee.com/Syhaswm/zhihuishu-answer/releases)。
+更细的操作步骤见 [使用说明](使用说明.md)。源码仓库：[Gitee](https://gitee.com/Syhaswm/zhihuishu-answer) · [GitHub](https://github.com/Syhaswm/zhihuishu-answer)。安装包在 [Gitee Releases](https://gitee.com/Syhaswm/zhihuishu-answer/releases)。
 
 发行版里的 `智慧树答题-Setup.exe` 自带答题服务，安装后不需要再装 Python。源码在本仓库。
 
