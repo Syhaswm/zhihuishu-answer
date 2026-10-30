@@ -245,6 +245,87 @@ def model_usage(body: ModelsIn):
     return {"ok": True, **result}
 
 
+def _setup_download_gitee(payload):
+    for asset in payload.get("assets") or []:
+        name = str(asset.get("name") or "")
+        if name.endswith("Setup.exe"):
+            url = str(asset.get("browser_download_url") or "")
+            if url:
+                return url
+    tag = str(payload.get("tag_name") or "").lstrip("vV")
+    if tag:
+        return f"https://gitee.com/Syhaswm/zhihuishu-answer/releases/tag/v{tag}"
+    return ""
+
+
+def _setup_download_github(payload):
+    for asset in payload.get("assets") or []:
+        name = str(asset.get("name") or "")
+        if name.endswith("Setup.exe"):
+            url = str(asset.get("browser_download_url") or "")
+            if url:
+                return url
+    tag = str(payload.get("tag_name") or "").lstrip("vV")
+    if tag:
+        return f"https://github.com/Syhaswm/zhihuishu-answer/releases/tag/v{tag}"
+    return ""
+
+
+def _latest_release_info():
+    """Return (latest_tag, download_url, errors)."""
+    session = answer.session()
+    gitee_payload = None
+    github_payload = None
+    errors = []
+
+    try:
+        response = session.get(
+            "https://gitee.com/api/v5/repos/Syhaswm/zhihuishu-answer/releases",
+            params={"page": 1, "per_page": 100, "direction": "desc"},
+            timeout=8,
+        )
+        if response.ok:
+            releases = response.json()
+            if isinstance(releases, list) and releases:
+                gitee_payload = max(releases, key=lambda item: _version_key(item.get("tag_name")))
+        else:
+            errors.append(f"Gitee HTTP {response.status_code}")
+    except Exception:
+        errors.append("Gitee")
+
+    try:
+        response = session.get(
+            "https://api.github.com/repos/Syhaswm/zhihuishu-answer/releases",
+            params={"per_page": 100},
+            headers={"Accept": "application/vnd.github+json"},
+            timeout=8,
+        )
+        if response.ok:
+            releases = response.json()
+            if isinstance(releases, list) and releases:
+                github_payload = max(releases, key=lambda item: _version_key(item.get("tag_name")))
+        else:
+            errors.append(f"GitHub HTTP {response.status_code}")
+    except Exception:
+        errors.append("GitHub")
+
+    if not gitee_payload and not github_payload:
+        return None, "", errors
+
+    gitee_key = _version_key((gitee_payload or {}).get("tag_name"))
+    github_key = _version_key((github_payload or {}).get("tag_name"))
+    if gitee_key >= github_key and gitee_payload:
+        latest = str(gitee_payload.get("tag_name") or "").lstrip("vV")
+        download = _setup_download_gitee(gitee_payload) or _setup_download_github(github_payload or {})
+    else:
+        latest = str((github_payload or gitee_payload).get("tag_name") or "").lstrip("vV")
+        download = _setup_download_github(github_payload or {}) or _setup_download_gitee(gitee_payload or {})
+
+    if not download and latest:
+        download = f"https://gitee.com/Syhaswm/zhihuishu-answer/releases/tag/v{latest}"
+    return latest, download, errors
+
+
 @app.post("/api/update")
 def check_update(body: UpdateIn):
     current = str(body.current or "").strip()
@@ -257,34 +338,13 @@ def check_update(body: UpdateIn):
             "checkMessage": message,
         }
 
-    try:
-        response = answer.session().get(
-            "https://gitee.com/api/v5/repos/Syhaswm/zhihuishu-answer/releases",
-            params={"page": 1, "per_page": 20, "direction": "desc"},
-            timeout=8,
+    latest, download, _errors = _latest_release_info()
+    if not latest:
+        return failed(
+            "暂时无法连接更新服务器，请检查网络。可稍后点「重试」，或到 Gitee / GitHub 发行版页手动查看。"
         )
-    except Exception:
-        return failed("暂时无法连接更新服务器，请检查网络。可稍后点「重试」，或到 Gitee 发行版页手动查看。")
-    try:
-        releases = response.json()
-    except ValueError:
-        return failed("更新服务器返回异常，请稍后再试。")
-    if not response.ok:
-        return failed(f"检查更新失败（HTTP {response.status_code}），请稍后再试。")
-    if not isinstance(releases, list) or not releases:
-        return failed("没有读取到发行版信息，请稍后再试。")
-    payload = max(releases, key=lambda item: _version_key(item.get("tag_name")))
-    latest = str(payload.get("tag_name") or "").lstrip("vV")
-    if not latest or _version_key(latest) <= _version_key(current):
+    if _version_key(latest) <= _version_key(current):
         return {"update": False, "current": current, "latest": latest, "checkOk": True}
-    download = ""
-    for asset in payload.get("assets") or []:
-        name = str(asset.get("name") or "")
-        if name.endswith("Setup.exe"):
-            download = str(asset.get("browser_download_url") or "")
-            break
-    if not download:
-        download = f"https://gitee.com/Syhaswm/zhihuishu-answer/releases/tag/v{latest}"
     return {
         "update": True,
         "current": current,

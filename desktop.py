@@ -314,6 +314,7 @@ class Api:
         allowed = (
             target.startswith("https://platform.deepseek.com"),
             target.startswith("https://gitee.com/Syhaswm/zhihuishu-answer/releases/"),
+            target.startswith("https://github.com/Syhaswm/zhihuishu-answer/releases/"),
         )
         if not any(allowed):
             return {"ok": False}
