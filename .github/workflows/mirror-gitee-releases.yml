@@ -25,10 +25,8 @@ jobs:
       - name: Install dependencies
         run: pip install requests
 
-      - uses: cli/cli-action@v2
-
       - name: Sync releases from Gitee to GitHub
         env:
           GH_TOKEN: ${{ github.token }}
           SKIP_GIT_PUSH: "1"
-        run: python scripts/mirror_gitee_releases_to_github.py --skip-git
+        run: gh auth status && python scripts/mirror_gitee_releases_to_github.py --skip-git
