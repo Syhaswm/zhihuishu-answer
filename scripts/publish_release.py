@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -42,6 +43,18 @@ def gh_release_exists(tag: str) -> bool:
         capture_output=True,
     )
     return result.returncode == 0
+
+
+def _gh_asset_arg(path: Path, display: str) -> str:
+    """GitHub CLI on Windows mishandles non-ASCII paths; stage Setup under build/."""
+    if display.endswith("Setup.exe"):
+        staging = ROOT / "build" / "gh-upload-Setup.exe"
+        staging.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, staging)
+        return f"{staging}#{display}"
+    if display != path.name:
+        return f"{path}#{display}"
+    return str(path)
 
 
 def publish_gitee(tag: str, body: str, setup: Path = SETUP) -> None:
@@ -95,7 +108,7 @@ def publish_github(
         if not path.is_file():
             raise SystemExit(f"缺少文件: {path}")
         display = names.get(path) or path.name
-        gh_assets.append(f"{path}#{display}" if display != path.name else str(path))
+        gh_assets.append(_gh_asset_arg(path, display))
 
     if gh_release_exists(tag):
         command = ["gh", "release", "upload", tag, "-R", GITHUB, "--clobber", *gh_assets]

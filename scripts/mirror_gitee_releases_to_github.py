@@ -74,7 +74,10 @@ def github_has_setup(tag: str) -> bool:
         return False
     payload = json.loads(result.stdout or "{}")
     for asset in payload.get("assets") or []:
-        if str(asset.get("name") or "").endswith("Setup.exe"):
+        name = str(asset.get("name") or "")
+        if name in ("智慧树答题-Setup.exe", "Setup.exe"):
+            return True
+        if name.endswith("Setup.exe") and len(name) > 12:
             return True
     return False
 
