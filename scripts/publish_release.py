@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -46,12 +45,8 @@ def gh_release_exists(tag: str) -> bool:
 
 
 def _gh_asset_arg(path: Path, display: str) -> str:
-    """GitHub CLI on Windows mishandles non-ASCII paths; stage Setup under build/."""
     if display.endswith("Setup.exe"):
-        staging = ROOT / "build" / "gh-upload-Setup.exe"
-        staging.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(path, staging)
-        return f"{staging}#{display}"
+        return f"{path}#{display}"
     if display != path.name:
         return f"{path}#{display}"
     return str(path)
