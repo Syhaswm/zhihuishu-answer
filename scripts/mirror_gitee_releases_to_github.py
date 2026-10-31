@@ -77,8 +77,6 @@ def github_has_setup(tag: str) -> bool:
         name = str(asset.get("name") or "")
         if name in ("智慧树答题-Setup.exe", "Setup.exe"):
             return True
-        if name.endswith("Setup.exe") and len(name) > 12:
-            return True
     return False
 
 
