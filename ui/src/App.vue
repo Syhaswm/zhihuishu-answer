@@ -49,6 +49,9 @@ const confirmAll = ref(false);
 const page = ref(1);
 const paperAnchor = ref(null);
 const helpOpen = ref(false);
+const fullFetchConfirmOpen = ref(false);
+const fullFetchConfirmItems = ref([]);
+let fullFetchConfirmPending = null;
 const updateInfo = ref(null);
 const updateCheckFailed = ref("");
 const checkingUpdate = ref(false);
@@ -785,6 +788,21 @@ async function clearCheckpoint() {
   }
 }
 
+function resolveFullFetchConfirm(ok) {
+  fullFetchConfirmOpen.value = false;
+  const done = fullFetchConfirmPending;
+  fullFetchConfirmPending = null;
+  if (done) done(!!ok);
+}
+
+function askFullFetchConfirm(items) {
+  return new Promise((resolve) => {
+    fullFetchConfirmItems.value = items || [];
+    fullFetchConfirmOpen.value = true;
+    fullFetchConfirmPending = resolve;
+  });
+}
+
 async function runSolve(retryFailedOnly = false) {
   error.value = "";
   batchFailKind.value = "";
@@ -804,6 +822,24 @@ async function runSolve(retryFailedOnly = false) {
       return;
     }
     resumeCheckpoint.value = true;
+  } else {
+    try {
+      const check = await api.fetchFullFetchConfirm(
+        url.value,
+        provider.value,
+        modelName.value,
+        baseUrl.value,
+        thinking.value && supportsThinking.value,
+        resumeCheckpoint.value,
+        false
+      );
+      if (check.needConfirm && check.items && check.items.length) {
+        const ok = await askFullFetchConfirm(check.items);
+        if (!ok) return;
+      }
+    } catch {
+      /* 检查失败不阻断获取 */
+    }
   }
   loading.value = true;
   status.value = retryFailedOnly ? "正在仅重试未答全的作业…" : "正在同时获取每一份作业…";
@@ -1210,6 +1246,29 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
 
       <p class="foot">答案由 DeepSeek 生成，提交前请自行核对。</p>
     </div>
+    <Modal
+      :visible="fullFetchConfirmOpen"
+      title="确认再次获取答案"
+      :width="520"
+      :footer="null"
+      @cancel="resolveFullFetchConfirm(false)"
+    >
+      <p class="confirm-lead">
+        以下作业在 24 小时内已经获取过答案。再次获取可能重复消耗模型额度（题干未变的题仍会沿用缓存，但可能仍有新请求）。
+      </p>
+      <ul class="confirm-url-list">
+        <li v-for="(item, idx) in fullFetchConfirmItems" :key="idx">
+          <span class="confirm-url">{{ item.url }}</span>
+          <span class="confirm-meta">约 {{ item.hoursAgo }} 小时前</span>
+        </li>
+      </ul>
+      <p class="confirm-tip">只是续答未完成的题组时，请用「仅重试失败」，不会弹此确认。</p>
+      <div class="confirm-actions">
+        <Button @click="resolveFullFetchConfirm(false)">取消</Button>
+        <Button theme="solid" type="primary" @click="resolveFullFetchConfirm(true)">仍要获取</Button>
+      </div>
+    </Modal>
+
     <Modal :visible="helpOpen" title="帮助" :width="640" :footer="null" @cancel="helpOpen = false">
       <div class="help">
         <h2>获取 DeepSeek API Key</h2>
@@ -1263,6 +1322,10 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
         <h2>断点续答与仅重试失败</h2>
         <p>
           题目按 4 题一组调用模型。开启「断点续答」后，每组成功会写入本机 checkpoint.json；再次「获取答案」且题干未变时会跳过已答组。失败的题组会单独记录，可点「仅重试失败」只处理未答全的作业、只请求未成功的题组（已完成的作业地址不会重复调模型）。换模型或关闭续答会重新全量请求。答全后断点自动清除，也可点「清除断点」。
+        </p>
+        <h2>24 小时内再次获取</h2>
+        <p>
+          同一作业地址在 24 小时内若已完整获取过答案，再次点「获取答案」（非「仅重试失败」）时会先弹窗确认，避免误点重复消耗模型额度。正在续答未答全的作业不会弹窗。
         </p>
         <h2>题干指纹（沿用上次答案）</h2>
         <p>

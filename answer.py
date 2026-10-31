@@ -1408,6 +1408,65 @@ def format_cache_hint(stats):
     return ""
 
 
+FULL_FETCH_WINDOW_SEC = 86400
+
+
+def _full_fetch_map(checkpoint):
+    mapping = checkpoint.get("full_fetch")
+    if not isinstance(mapping, dict):
+        mapping = {}
+        checkpoint["full_fetch"] = mapping
+    return mapping
+
+
+def record_full_fetch(url):
+    text = str(url or "").strip()
+    if not text:
+        return
+    key = _checkpoint_url_key(text)
+    with _CHECKPOINT_LOCK:
+        checkpoint = load_checkpoint()
+        mapping = _full_fetch_map(checkpoint)
+        mapping[key] = {"url": text, "at": int(time.time())}
+        save_checkpoint(checkpoint)
+
+
+def full_fetch_confirm_items(
+    checkpoint,
+    urls,
+    provider_id,
+    model,
+    thinking,
+    resume,
+    retry_failed_only,
+):
+    """URLs that need user confirm before another full fetch within 24h."""
+    if retry_failed_only:
+        return []
+    cleaned = [str(url or "").strip() for url in urls if str(url or "").strip()]
+    if not cleaned:
+        return []
+    pending_urls = set()
+    if resume:
+        for item in checkpoint_pending_items(
+            checkpoint, cleaned, provider_id, model, thinking
+        ):
+            pending_urls.add(str(item.get("url") or "").strip())
+    now = time.time()
+    mapping = checkpoint.get("full_fetch") or {}
+    items = []
+    for url in cleaned:
+        if resume and url in pending_urls:
+            continue
+        row = mapping.get(_checkpoint_url_key(url)) or {}
+        at = int(row.get("at") or 0)
+        if not at or now - at > FULL_FETCH_WINDOW_SEC:
+            continue
+        hours = max(0.1, round((now - at) / 3600, 1))
+        items.append({"url": url, "at": at, "hoursAgo": hours})
+    return items
+
+
 def clear_checkpoint_urls(urls):
     checkpoint = load_checkpoint()
     keys = {_checkpoint_url_key(url) for url in urls if str(url or "").strip()}
@@ -1416,11 +1475,14 @@ def clear_checkpoint_urls(urls):
     with _CHECKPOINT_LOCK:
         entries = checkpoint.get("entries") or {}
         cache = checkpoint.get("cache") or {}
+        full_fetch = checkpoint.get("full_fetch") or {}
         for key in keys:
             entries.pop(key, None)
             cache.pop(key, None)
+            full_fetch.pop(key, None)
         checkpoint["entries"] = entries
         checkpoint["cache"] = cache
+        checkpoint["full_fetch"] = full_fetch
         save_checkpoint(checkpoint)
 
 

@@ -129,6 +129,16 @@ class CheckpointPendingIn(BaseModel):
     thinking: bool = False
 
 
+class FullFetchConfirmIn(BaseModel):
+    urls: str = ""
+    provider: str = "deepseek"
+    model: str = ""
+    baseUrl: str = ""
+    thinking: bool = False
+    resume: bool = True
+    retryFailedOnly: bool = False
+
+
 class LoginIn(BaseModel):
     switch: bool = False
 
@@ -195,6 +205,19 @@ def checkpoint_pending(body: CheckpointPendingIn):
         body.model,
         body.baseUrl,
         body.thinking,
+    )
+
+
+@app.post("/api/solve/full-fetch-confirm")
+def full_fetch_confirm(body: FullFetchConfirmIn):
+    return api.full_fetch_confirm(
+        body.urls,
+        body.provider,
+        body.model,
+        body.baseUrl,
+        body.thinking,
+        body.resume,
+        body.retryFailedOnly,
     )
 
 

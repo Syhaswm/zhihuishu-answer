@@ -176,6 +176,30 @@ export function fetchCheckpointPending(urls, provider, model, baseUrl, thinking)
   });
 }
 
+export function fetchFullFetchConfirm(
+  urls,
+  provider,
+  model,
+  baseUrl,
+  thinking,
+  resume,
+  retryFailedOnly
+) {
+  return request("/api/solve/full-fetch-confirm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      urls,
+      provider,
+      model,
+      baseUrl,
+      thinking,
+      resume,
+      retryFailedOnly,
+    }),
+  });
+}
+
 export async function solveBatch(
   urls,
   apiKey,

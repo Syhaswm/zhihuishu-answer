@@ -656,8 +656,33 @@ class Api:
         if urls:
             answer.clear_checkpoint_urls(urls)
             return {"ok": True, "cleared": len(urls)}
-        answer.save_checkpoint({"version": answer.CHECKPOINT_VERSION, "entries": {}, "cache": {}})
+        answer.save_checkpoint(
+            {
+                "version": answer.CHECKPOINT_VERSION,
+                "entries": {},
+                "cache": {},
+                "full_fetch": {},
+            }
+        )
         return {"ok": True, "cleared": "all"}
+
+    def full_fetch_confirm(self, text, provider="deepseek", model="", base_url="", thinking=False, resume=True, retry_failed_only=False):
+        urls = answer.split_homework_urls(text)
+        try:
+            provider_info, _endpoint, model_name = answer.resolve_provider(provider, model, base_url)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc), "needConfirm": False, "items": []}
+        checkpoint = answer.load_checkpoint()
+        items = answer.full_fetch_confirm_items(
+            checkpoint,
+            urls,
+            provider_info["id"],
+            model_name,
+            bool(thinking),
+            bool(resume),
+            bool(retry_failed_only),
+        )
+        return {"ok": True, "needConfirm": bool(items), "items": items}
 
     def checkpoint_pending(self, text, provider="deepseek", model="", base_url="", thinking=False):
         urls = answer.split_homework_urls(text)
@@ -893,6 +918,8 @@ class Api:
                     result["failNext"] = hint
             elif resume:
                 answer.clear_checkpoint_url(checkpoint, url)
+            if not retry_failed_only:
+                answer.record_full_fetch(url)
             papers.append(result)
         done = sum(1 for paper in papers if paper.get("ok"))
         partial = sum(1 for paper in papers if not paper.get("ok") and paper.get("questions"))

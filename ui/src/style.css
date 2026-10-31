@@ -333,6 +333,47 @@ body {
   color: #ad6800;
 }
 
+.confirm-lead {
+  margin: 0 0 12px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--semi-color-text-0);
+}
+
+.confirm-url-list {
+  margin: 0 0 12px;
+  padding-left: 18px;
+  max-height: 160px;
+  overflow: auto;
+}
+
+.confirm-url-list li {
+  margin-bottom: 8px;
+  font-size: 13px;
+  line-height: 1.45;
+  word-break: break-all;
+}
+
+.confirm-meta {
+  display: block;
+  margin-top: 2px;
+  color: var(--semi-color-text-2);
+  font-size: 12px;
+}
+
+.confirm-tip {
+  margin: 0 0 16px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--semi-color-text-2);
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .help h2 {
   margin: 18px 0 8px;
   font-size: 15px;
