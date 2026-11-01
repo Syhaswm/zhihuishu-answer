@@ -53,25 +53,40 @@ def download(url, dest: Path):
 
 
 def prepare_runtime():
-    if (RUNTIME / "python.exe").exists() and (RUNTIME / "Lib" / "site-packages" / "fastapi").exists():
-        print("runtime ready")
-        return
     if not (RUNTIME / "python.exe").exists():
         _install_embed()
-    run([str(RUNTIME / "python.exe"), "-m", "pip", "install", "--no-warn-script-location", "-i", PIP_INDEX, "setuptools", "wheel"])
-    run(
-        [
-            str(RUNTIME / "python.exe"),
-            "-m",
-            "pip",
-            "install",
-            "--no-warn-script-location",
-            "--no-build-isolation",
-            "-i",
-            PIP_INDEX,
-            *PACKAGES,
-        ]
-    )
+    site = RUNTIME / "Lib" / "site-packages"
+    if not (site / "fastapi").exists():
+        run(
+            [
+                str(RUNTIME / "python.exe"),
+                "-m",
+                "pip",
+                "install",
+                "--no-warn-script-location",
+                "-i",
+                PIP_INDEX,
+                "setuptools",
+                "wheel",
+            ]
+        )
+    need_pip = not (site / "fastapi").exists()
+    if need_pip:
+        run(
+            [
+                str(RUNTIME / "python.exe"),
+                "-m",
+                "pip",
+                "install",
+                "--no-warn-script-location",
+                "--no-build-isolation",
+                "-i",
+                PIP_INDEX,
+                *PACKAGES,
+            ]
+        )
+    else:
+        print("runtime packages ok")
 
 
 def _install_embed():
@@ -117,14 +132,12 @@ def run(args):
 
 
 def assemble():
-    if PORTABLE.exists():
-        shutil.rmtree(PORTABLE)
-    PORTABLE.mkdir(parents=True)
-    shutil.copytree(RUNTIME, PORTABLE / "runtime")
+    PORTABLE.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(RUNTIME, PORTABLE / "runtime", dirs_exist_ok=True)
     for name in ("answer.py", "usage_query.py", "desktop.py", "LICENSE", "README.md", "使用说明.md", "app.ico"):
         shutil.copy2(ROOT / name, PORTABLE / name)
     server = PORTABLE / "server"
-    server.mkdir()
+    server.mkdir(exist_ok=True)
     for path in (ROOT / "server").glob("*.py"):
         shutil.copy2(path, server / path.name)
     exe = ROOT / "src-tauri" / "target" / "release" / "zhihuishu-answer.exe"

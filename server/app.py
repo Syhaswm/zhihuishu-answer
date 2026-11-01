@@ -163,6 +163,9 @@ def _version_key(text):
 
 
 def _pythonw():
+    bundled = answer.ROOT / "runtime" / "pythonw.exe"
+    if bundled.is_file():
+        return str(bundled)
     candidate = Path(sys.executable).with_name("pythonw.exe")
     return str(candidate if candidate.exists() else sys.executable)
 

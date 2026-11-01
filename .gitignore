@@ -13,6 +13,8 @@ portable/
 settings.json
 checkpoint.json
 login_result.json
+login_chrome_profile/
+yidun_last_attempt.json
 sync_request.json
 sync_result.json
 api.log

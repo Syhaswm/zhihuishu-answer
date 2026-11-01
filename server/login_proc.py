@@ -73,31 +73,57 @@ def sync_polymas():
     )
 
 
-def main():
-    if "--sync" in sys.argv:
-        sync_polymas()
-        return
-    switch = "--switch" in sys.argv
+def webview_login(*, switch_account: bool) -> dict:
     api = desktop.Api()
-    result_path = answer.ROOT / "login_result.json"
     window = webview.create_window(
-        "登录智慧树",
+        "智慧树登录",
         desktop.LOGIN_URL,
         width=1100,
         height=760,
         text_select=True,
     )
     api._login = window
+    result_path = answer.ROOT / "login_result.json"
+    out: dict = {"ok": False, "error": "登录未完成"}
 
     def run():
+        nonlocal out
+        if switch_account:
+            try:
+                window.clear_cookies()
+            except Exception:
+                pass
+            try:
+                window.load_url(desktop.LOGIN_URL)
+            except Exception:
+                pass
+        deadline = time.time() + 180
+        while time.time() < deadline:
+            if not api._login_window_open():
+                out = {"ok": False, "error": "登录窗口已关闭。需要登录时再点「登录账号」。"}
+                break
+            cookie = api._cookies_from_login()
+            if not desktop._has_auth(cookie):
+                time.sleep(0.35)
+                continue
+            cookie = api._capture_polymas(cookie)
+            try:
+                api._hide_login()
+            except Exception:
+                pass
+            cookie = api._harvest(cookie)
+            name = desktop._account_name(cookie) or "已登录"
+            out = {"ok": True, "name": name}
+            break
+        else:
+            out = {
+                "ok": False,
+                "error": "还没有读到登录信息。请在弹出的窗口完成登录后再点一次登录账号。",
+            }
+        result_path.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
         try:
-            result = api.begin_login(switch)
-        except Exception as exc:
-            result = {"ok": False, "error": str(exc)}
-        result_path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
-        try:
-            if api._login is not None and not api._login.events.closed.is_set():
-                api._login.destroy()
+            if api._login_window_open():
+                window.destroy()
         except Exception:
             pass
 
@@ -109,6 +135,20 @@ def main():
         storage_path=str(profile),
         user_agent=answer.HEADERS["User-Agent"],
     )
+    return out
+
+
+def main():
+    if "--sync" in sys.argv:
+        sync_polymas()
+        return
+    switch = "--switch" in sys.argv
+    result_path = answer.ROOT / "login_result.json"
+    try:
+        result = webview_login(switch_account=switch)
+    except Exception as exc:
+        result = {"ok": False, "error": str(exc)}
+    result_path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
 
 
 if __name__ == "__main__":
