@@ -88,6 +88,30 @@ body {
   margin-bottom: 12px;
 }
 
+.dock-url-card {
+  margin-bottom: 10px;
+}
+
+.dock-url-field {
+  margin-bottom: 8px;
+}
+
+.dock-url-account {
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+
+.dock-url-actions {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dock-url-status {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .dock-top-row {
   margin-top: 12px;
 }

@@ -71,6 +71,7 @@ const dockOpacityOptions = [
   { value: 85, label: "85%（最透）" },
 ];
 const showDockSettings = ref(true);
+const showDockUrlPanel = ref(true);
 const dockShowAllQuestions = ref(false);
 const answerShowReason = ref(false);
 const answerFontSize = ref("medium");
@@ -332,6 +333,7 @@ async function loadSettings() {
   const font = String(data.answerFontSize || "medium").toLowerCase();
   answerFontSize.value = font === "small" || font === "large" ? font : "medium";
   showDockSettings.value = !isDocked.value;
+  showDockUrlPanel.value = true;
   if (isDocked.value) {
     try {
       await applyDockLayout(dockSide.value, dockWidth.value, dockOnTop.value, dockOpacity.value);
@@ -353,6 +355,9 @@ async function changeDockSide(value) {
   const next = value || "off";
   dockSide.value = next;
   showDockSettings.value = next === "off";
+  if (next !== "off") {
+    showDockUrlPanel.value = true;
+  }
   try {
     await api.setDockPref(next, dockWidth.value, dockOnTop.value, dockOpacity.value);
     await applyDockLayout(next, dockWidth.value, dockOnTop.value, dockOpacity.value);
@@ -913,6 +918,9 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
           <p v-else class="dock-tagline">贴边模式：用窄栏上一题/下一题或题号跳转对照答案；{{ hotkeyHint }} 复制当前空。</p>
         </div>
         <div class="brand-actions">
+          <Button v-if="isDocked" size="small" @click="showDockUrlPanel = !showDockUrlPanel">
+            {{ showDockUrlPanel ? "收起地址" : "作业地址" }}
+          </Button>
           <Button v-if="isDocked" size="small" @click="showDockSettings = !showDockSettings">
             {{ showDockSettings ? "收起设置" : "设置" }}
           </Button>
@@ -986,8 +994,44 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
         </div>
       </Card>
 
+      <Card
+        v-if="isDocked && showDockUrlPanel"
+        class="form-card dock-url-card"
+        :bodyStyle="{ padding: '12px 14px 10px' }"
+      >
+        <div class="field dock-url-field">
+          <div class="field-label">作业页地址</div>
+          <TextArea
+            :value="url"
+            :rows="3"
+            placeholder="每行一个作业页地址，粘贴后点「获取答案」。"
+            @change="(value) => (url = value)"
+          />
+        </div>
+        <div class="account dock-url-account">
+          {{ accountName ? "当前账号：" + accountName : "当前账号：未登录" }}
+        </div>
+        <div class="actions dock-url-actions">
+          <Button theme="solid" type="primary" size="small" :loading="loggingIn" @click="login">
+            {{ accountName ? "切换账号" : "登录" }}
+          </Button>
+          <Button theme="solid" type="primary" size="small" :loading="loading" :disabled="loggingIn" @click="start">
+            获取答案
+          </Button>
+          <Button
+            size="small"
+            :loading="loading"
+            :disabled="loggingIn || !pendingRetryCount"
+            @click="startRetryFailed"
+          >
+            重试失败
+          </Button>
+        </div>
+        <div v-if="status" class="status dock-url-status">{{ status }}</div>
+      </Card>
+
       <Card v-show="!isDocked || showDockSettings" class="form-card" :bodyStyle="{ padding: '18px 18px 14px' }">
-        <div class="field">
+        <div v-if="!isDocked" class="field">
           <div class="field-label">作业页地址</div>
           <TextArea
             :value="url"
@@ -995,6 +1039,9 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
             placeholder="每行粘贴一个作业做题页地址。普通作业页和 AI 教学中心答题页都可以。"
             @change="(value) => (url = value)"
           />
+        </div>
+        <div v-else class="field">
+          <div class="save-hint">作业页地址在上方「作业地址」面板输入；此处为模型与获取选项。</div>
         </div>
         <div class="field">
           <div class="field-label">模型</div>
@@ -1067,8 +1114,8 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
           </div>
           <Switch :checked="resumeCheckpoint" @change="(value) => (resumeCheckpoint = isChecked(value))" />
         </div>
-        <div class="account">{{ accountName ? "当前账号：" + accountName : "当前账号：未登录" }}</div>
-        <div class="actions">
+        <div v-if="!isDocked" class="account">{{ accountName ? "当前账号：" + accountName : "当前账号：未登录" }}</div>
+        <div v-if="!isDocked" class="actions">
           <Button theme="solid" type="primary" :loading="loggingIn" @click="login">
             {{ accountName ? "切换账号" : "登录账号" }}
           </Button>
@@ -1082,7 +1129,7 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
           </Button>
           <Button :disabled="loading" @click="clearCheckpoint">清除断点</Button>
         </div>
-        <div class="status">{{ status }}</div>
+        <div v-if="!isDocked" class="status">{{ status }}</div>
         <div v-if="sessionCacheText" class="cache-session">{{ sessionCacheText }}</div>
         <div v-if="sessionUsageText" class="usage-session">{{ sessionUsageText }}</div>
       </Card>
@@ -1298,7 +1345,7 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
           <li>打开「保存到答案文件夹」后，每份答案写成一个 txt。关掉后只在窗口里显示，不写文件。已有文件可以勾选删除，或点「删除全部答案」清掉整个文件夹。点「复制本份」只复制这一份。提交前自己核对一遍。</li>
         </ol>
         <h2>贴边做题</h2>
-        <p>在「贴边做题」里选贴在屏幕左侧或右侧。窗口会收成窄栏并占满工作区高度，可选「窗口置顶」以免被挡住。贴边时默认只显示题目答案，点「设置」可展开模型与获取答案。下次打开会记住上次模式。切屏是否被平台记录与贴边无关，见 README 说明。</p>
+        <p>在「贴边做题」里选贴在屏幕左侧或右侧。窗口会收成窄栏并占满工作区高度，可选「窗口置顶」以免被挡住。贴边时顶部有「作业地址」面板可粘贴链接并获取答案，可点「收起地址」隐藏；「设置」展开模型等选项。下次打开会记住上次模式。切屏是否被平台记录与贴边无关，见 README 说明。</p>
         <h2>检查更新</h2>
         <p>标题旁会显示当前版本号（如 v1.7.6）。打开软件时会自动检查 Gitee 是否有新版本；也可随时点右上角「检查更新」。若网络异常，顶部会出现橙色提示，可点「重试」。</p>
         <h2>快捷键复制（贴边做题）</h2>

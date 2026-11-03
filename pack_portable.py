@@ -140,7 +140,15 @@ def assemble():
         shutil.copy2(ROOT / name, PORTABLE / name)
     server = PORTABLE / "server"
     server.mkdir()
+    skip_server = {
+        "playwright_login.py",
+        "test_yidun_login.py",
+        "yidun_reverse.py",
+        "yidun_slider.py",
+    }
     for path in (ROOT / "server").glob("*.py"):
+        if path.name in skip_server:
+            continue
         shutil.copy2(path, server / path.name)
     exe = ROOT / "src-tauri" / "target" / "release" / "zhihuishu-answer.exe"
     if not exe.exists():
