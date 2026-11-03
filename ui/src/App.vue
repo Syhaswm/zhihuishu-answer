@@ -1202,6 +1202,12 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
           <Button v-if="currentPaper.ok" size="small" @click="copyText(currentPaper.text)">复制本份</Button>
         </div>
         <Banner
+          v-if="currentPaper.optionNote"
+          class="alert"
+          type="warning"
+          :description="currentPaper.optionNote"
+        />
+        <Banner
           v-if="!currentPaper.ok && paperFailText(currentPaper)"
           class="alert"
           :type="failBannerType(currentPaper.failKind)"

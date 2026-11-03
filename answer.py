@@ -46,7 +46,8 @@ HEADERS = {
 }
 
 HOMEWORK_URL = "https://studentexam-api.zhihuishu.com/studentExam/gateway/t/v1/student/doHomework"
-EXAM_URL = "https://studentexam-api.zhihuishu.com/studentExam/gateway/t/v1/student/doExam"
+EXAM_URL = "https://taurusexam-api.zhihuishu.com/taurusExam/gateway/t/v1/student/doExam"
+EXAM_URL_FALLBACK = "https://studentexam-api.zhihuishu.com/studentExam/gateway/t/v1/student/doExam"
 HOMEWORK_ROUTE_MARKERS = ("dohomework", "doexamination")
 AES_KEY = b"onbfhdyvz8x7otrp"
 AES_IV = b"1g3qqdh4jvbskb9x"
@@ -377,7 +378,7 @@ _CHOICE_LETTERS = "ABCDEFGH"
 _JUDGEMENT = {"对", "错", "正确", "错误", "是", "否", "√", "×"}
 
 
-def format_choice(text, index):
+def format_choice(text, index, prefix_letter=True):
     text = str(text or "").strip()
     if not text:
         return ""
@@ -385,20 +386,22 @@ def format_choice(text, index):
     if match:
         body = match.group(2).strip()
         letter = match.group(1).upper()
+        if not prefix_letter:
+            return body or letter
         return f"{letter}. {body}" if body else letter
-    if text in _JUDGEMENT:
+    if text in _JUDGEMENT or not prefix_letter:
         return text
     if 0 <= index < len(_CHOICE_LETTERS):
         return f"{_CHOICE_LETTERS[index]}. {text}"
     return text
 
 
-def normalize_question(question):
+def normalize_question(question, prefix_letter=True):
     raw_name = str(question.get("name") or "")
     qtype = question.get("questionType") or {}
     options = []
     for index, opt in enumerate(question.get("questionOptions") or []):
-        content = format_choice(strip_html(opt.get("content")), index)
+        content = format_choice(strip_html(opt.get("content")), index, prefix_letter=prefix_letter)
         if content:
             options.append(content)
     return {
@@ -409,18 +412,18 @@ def normalize_question(question):
     }
 
 
-def collect_questions(nodes, bucket):
+def collect_questions(nodes, bucket, prefix_letter=True):
     for question in nodes or []:
         children = question.get("questionChildrens")
         if isinstance(children, list) and children:
-            collect_questions(children, bucket)
+            collect_questions(children, bucket, prefix_letter=prefix_letter)
             continue
-        item = normalize_question(question)
+        item = normalize_question(question, prefix_letter=prefix_letter)
         if item["stem"]:
             bucket.append(item)
 
 
-def parse_exam(data):
+def parse_exam(data, prefix_letter=True):
     exam = (data or {}).get("rt") or {}
     exam = exam.get("examBase") if isinstance(exam, dict) else None
     parts = exam.get("workExamParts") if isinstance(exam, dict) else None
@@ -428,7 +431,7 @@ def parse_exam(data):
         return None
     questions = []
     for part in parts:
-        collect_questions(part.get("questionDtos"), questions)
+        collect_questions(part.get("questionDtos"), questions, prefix_letter=prefix_letter)
     for index, question in enumerate(questions, start=1):
         question["n"] = index
         question["blankLabels"] = infer_blank_labels(question)
@@ -526,7 +529,11 @@ def fetch_exam(url, cookie=None):
         raise RuntimeError("请先填写 Cookie。在已登录的浏览器里打开作业页，从 F12 复制请求头中的 Cookie。")
     parsed = parse_homework_url(url)
     secret = encrypt_params(homework_api_payload(parsed))
-    endpoints = [EXAM_URL, HOMEWORK_URL] if parsed.get("examKind") == "examination" else [HOMEWORK_URL]
+    endpoints = (
+        [EXAM_URL, EXAM_URL_FALLBACK, HOMEWORK_URL]
+        if parsed.get("examKind") == "examination"
+        else [HOMEWORK_URL]
+    )
     resp = None
     data = None
     last_message = ""
@@ -544,7 +551,12 @@ def fetch_exam(url, cookie=None):
             raise RuntimeError(f"接口没有返回题目 JSON（HTTP {resp.status_code}）：{snippet}")
         status = str(data.get("status"))
         if status == "200":
-            break
+            exam = parse_exam(data, prefix_letter=parsed.get("examKind") != "examination")
+            if not exam:
+                raise RuntimeError("登录状态有效，但这份响应里没有题目。确认地址是正在做的作业页。")
+            if parsed.get("examKind") == "examination":
+                exam["optionNote"] = "选择题选项在页面上是随机顺序，答案只给选项原文，请按文字选择，不要对照字母。"
+            return exam
         last_message = str(data.get("msg") or data.get("message") or text[:180])
         if index + 1 < len(endpoints) and any(word in last_message for word in ("参数", "不存在", "非法")):
             continue
@@ -569,10 +581,7 @@ def fetch_exam(url, cookie=None):
                 "服务器没有认出这条作业地址。请回到正在做题的页面，重新复制地址栏整段地址后再试。"
             )
         raise RuntimeError(f"拉题目失败：{message}")
-    exam = parse_exam(data)
-    if not exam:
-        raise RuntimeError("登录状态有效，但这份响应里没有题目。确认地址是正在做的作业页。")
-    return exam
+    raise RuntimeError("拉题目失败：接口没有返回试卷。")
 
 
 def load_api_key():
@@ -1600,6 +1609,9 @@ def render(exam):
     if exam["course"]:
         head = f"{exam['course']} · {head}"
     lines = [f"{head} · {len(exam['questions'])} 题", ""]
+    if exam.get("optionNote"):
+        lines.append(exam["optionNote"])
+        lines.append("")
     for question in exam["questions"]:
         score = f" · {question['score']}分" if question["score"] != "" else ""
         lines.append(f"{question['n']}. [{question['type']}{score}] {question['stem']}")
@@ -1654,6 +1666,7 @@ def result_payload(exam, folder=None, index=1, save=True):
         "text": text,
         "path": str(out) if out else "",
         "file": out.name if out else "",
+        "optionNote": exam.get("optionNote") or "",
         "questions": [
             {
                 "n": question["n"],
