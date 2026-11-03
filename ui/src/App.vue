@@ -907,7 +907,7 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
 <template>
   <div ref="scroller" class="page" :class="pageDisplayClasses">
     <div class="shell">
-      <header class="brand">
+      <header class="brand" :class="{ 'brand--dock': isDocked }">
         <img class="logo" src="/icon.png" alt="" />
         <div class="brand-copy">
           <div class="brand-title-row">
@@ -924,8 +924,8 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
           <Button v-if="isDocked" size="small" @click="showDockSettings = !showDockSettings">
             {{ showDockSettings ? "收起设置" : "设置" }}
           </Button>
-          <Button size="small" :loading="checkingUpdate" @click="manualUpdateCheck">检查更新</Button>
-          <Button @click="helpOpen = true">帮助</Button>
+          <Button size="small" :loading="checkingUpdate" @click="manualUpdateCheck">更新</Button>
+          <Button size="small" @click="helpOpen = true">帮助</Button>
         </div>
       </header>
 
@@ -940,7 +940,11 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
         <Button size="small" @click="updateCheckFailed = ''">关闭</Button>
       </div>
 
-      <Card class="form-card dock-card" :bodyStyle="{ padding: '18px 18px 14px' }">
+      <Card
+        v-show="!isDocked || showDockSettings"
+        class="form-card dock-card"
+        :bodyStyle="{ padding: isDocked ? '12px 12px 10px' : '18px 18px 14px' }"
+      >
         <div class="field">
           <div class="field-label">贴边做题</div>
           <Select
@@ -999,6 +1003,15 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
         class="form-card dock-url-card"
         :bodyStyle="{ padding: '12px 14px 10px' }"
       >
+        <div v-if="isDocked" class="field dock-side-field">
+          <div class="field-label">贴边 / 窗口</div>
+          <Select
+            :value="dockSide"
+            :optionList="dockModeOptions"
+            style="width: 100%"
+            @change="changeDockSide"
+          />
+        </div>
         <div class="field dock-url-field">
           <div class="field-label">作业页地址</div>
           <TextArea

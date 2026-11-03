@@ -84,6 +84,84 @@ body {
   line-height: 1.45;
 }
 
+/* 贴边窄栏：顶栏纵向排列，避免标题被挤成一字一行 */
+.brand--dock {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.brand--dock .logo {
+  display: none;
+}
+
+.brand--dock .brand-copy {
+  flex: none;
+  width: 100%;
+  min-width: 0;
+}
+
+.brand--dock .brand-title-row {
+  flex-wrap: nowrap;
+}
+
+.brand--dock .dock-tagline {
+  display: none;
+}
+
+.brand--dock .brand-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  width: 100%;
+}
+
+.brand--dock .brand-actions .semi-button {
+  width: 100%;
+  margin: 0 !important;
+}
+
+.page--dock .dock-card .save-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.page--dock .dock-card .save-hint {
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.page--dock .dock-side-field {
+  margin-bottom: 10px;
+}
+
+.page--dock .dock-url-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.page--dock .dock-url-actions .semi-button {
+  width: 100%;
+  margin: 0 !important;
+}
+
+.page--dock .dock-url-actions .semi-button:nth-child(3) {
+  grid-column: 1 / -1;
+}
+
+.page--dock .form-card {
+  overflow: hidden;
+}
+
+.page--dock .semi-select,
+.page--dock .semi-input-textarea-wrapper {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
 .dock-card {
   margin-bottom: 12px;
 }
@@ -125,7 +203,7 @@ body {
 }
 
 .page--dock .brand h1 {
-  font-size: 18px;
+  font-size: 17px;
 }
 
 .page--dock .logo {
