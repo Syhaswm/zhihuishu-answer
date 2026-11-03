@@ -46,6 +46,8 @@ HEADERS = {
 }
 
 HOMEWORK_URL = "https://studentexam-api.zhihuishu.com/studentExam/gateway/t/v1/student/doHomework"
+EXAM_URL = "https://studentexam-api.zhihuishu.com/studentExam/gateway/t/v1/student/doExam"
+HOMEWORK_ROUTE_MARKERS = ("dohomework", "doexamination")
 AES_KEY = b"onbfhdyvz8x7otrp"
 AES_IV = b"1g3qqdh4jvbskb9x"
 API_BASE = "https://api.deepseek.com/chat/completions"
@@ -131,24 +133,29 @@ def parse_homework_url(url):
     text = unquote(url.strip())
     hashed = text.split("#", 1)[1] if "#" in text else text
     hashed = hashed.split("?", 1)[0]
-    parts = [item for item in hashed.split("/") if item]
-    if "dohomework" not in parts:
+    segments = [item for item in hashed.split("/") if item]
+    lowered = [item.lower() for item in segments]
+    marker = next((item for item in HOMEWORK_ROUTE_MARKERS if item in lowered), None)
+    if not marker:
         raise ValueError(
             "这不是作业做题页地址。请粘贴浏览器里打开作业后的完整地址。"
-            "普通作业页路径里有 /webExamList/dohomework/，"
+            "普通作业页路径里有 /webExamList/dohomework/ 或 /webExamList/doexamination/，"
             "AI 教学中心作业页路径里有 /exam-hub/ 和 answer-homework。"
         )
-    index = parts.index("dohomework")
-    fields = parts[index + 1 :]
+    index = lowered.index(marker)
+    fields = segments[index + 1 :]
     if len(fields) < 5:
         raise ValueError("地址里的作业参数不完整，请从浏览器地址栏整段复制。")
-    return {
+    payload = {
         "recruitId": fields[0],
         "examId": fields[2],
         "studentExamId": fields[1],
         "schoolId": fields[4],
         "courseId": fields[3],
     }
+    if marker == "doexamination":
+        payload["examKind"] = "examination"
+    return payload
 
 
 POLY_ORIGIN = "https://hike-teaching-center.polymas.com"
@@ -492,38 +499,58 @@ def _login_wall(response):
     return urlparse(response.url).netloc.lower().startswith("passport.")
 
 
-def fetch_exam(url, cookie=None):
-    cookie_text = COOKIE if cookie is None else str(cookie).strip()
-    if not cookie_text:
-        raise RuntimeError("请先填写 Cookie。在已登录的浏览器里打开作业页，从 F12 复制请求头中的 Cookie。")
-    payload = parse_homework_url(url)
-    secret = encrypt_params(payload)
-    resp, cookie_text = request_with_sso(
+def homework_api_payload(parsed):
+    return {
+        "recruitId": parsed["recruitId"],
+        "examId": parsed["examId"],
+        "studentExamId": parsed["studentExamId"],
+        "schoolId": parsed["schoolId"],
+        "courseId": parsed["courseId"],
+    }
+
+
+def _post_exam_api(url, cookie_text, secret):
+    return request_with_sso(
         "POST",
-        HOMEWORK_URL,
+        url,
         cookie_text,
         headers=HEADERS,
         data={"secretStr": secret},
         timeout=30,
     )
-    if _login_wall(resp) or getattr(resp.request, "method", "POST") != "POST":
-        resp, _cookie_text = request_with_sso(
-            "POST",
-            HOMEWORK_URL,
-            cookie_text,
-            headers=HEADERS,
-            data={"secretStr": secret},
-            timeout=30,
-        )
-    if _login_wall(resp):
-        raise RuntimeError("登录已失效。请点「切换账号」重新登录后再获取答案。")
-    text = resp.text or ""
-    try:
-        data = resp.json()
-    except ValueError:
-        snippet = re.sub(r"\s+", " ", text)[:180]
-        raise RuntimeError(f"接口没有返回题目 JSON（HTTP {resp.status_code}）：{snippet}")
-    status = str(data.get("status"))
+
+
+def fetch_exam(url, cookie=None):
+    cookie_text = COOKIE if cookie is None else str(cookie).strip()
+    if not cookie_text:
+        raise RuntimeError("请先填写 Cookie。在已登录的浏览器里打开作业页，从 F12 复制请求头中的 Cookie。")
+    parsed = parse_homework_url(url)
+    secret = encrypt_params(homework_api_payload(parsed))
+    endpoints = [EXAM_URL, HOMEWORK_URL] if parsed.get("examKind") == "examination" else [HOMEWORK_URL]
+    resp = None
+    data = None
+    last_message = ""
+    for index, endpoint in enumerate(endpoints):
+        resp, cookie_text = _post_exam_api(endpoint, cookie_text, secret)
+        if _login_wall(resp) or getattr(resp.request, "method", "POST") != "POST":
+            resp, cookie_text = _post_exam_api(endpoint, cookie_text, secret)
+        if _login_wall(resp):
+            raise RuntimeError("登录已失效。请点「切换账号」重新登录后再获取答案。")
+        text = resp.text or ""
+        try:
+            data = resp.json()
+        except ValueError:
+            snippet = re.sub(r"\s+", " ", text)[:180]
+            raise RuntimeError(f"接口没有返回题目 JSON（HTTP {resp.status_code}）：{snippet}")
+        status = str(data.get("status"))
+        if status == "200":
+            break
+        last_message = str(data.get("msg") or data.get("message") or text[:180])
+        if index + 1 < len(endpoints) and any(word in last_message for word in ("参数", "不存在", "非法")):
+            continue
+        break
+    else:
+        status = str(data.get("status")) if data else ""
     if status != "200":
         message = data.get("msg") or data.get("message") or text[:180]
         if data.get("code") == -12 or "验证" in str(message):

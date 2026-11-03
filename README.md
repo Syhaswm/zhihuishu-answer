@@ -2,7 +2,7 @@
 
 桌面工具。粘贴智慧树作业页地址后，读取题目并用 DeepSeek 生成参考答案。支持普通作业页和 AI 教学中心答题页。程序只读题目，不会交卷。
 
-当前版本：1.9.2
+当前版本：1.9.3
 
 ## 免责声明
 
@@ -37,7 +37,7 @@ Copyright (C) 2026 Zephyr
 2. 在浏览器打开正在做的作业，把地址栏整段地址粘贴到软件里。多份作业每行一个。
 3. 填入 DeepSeek API Key，点「获取答案」。
 
-普通作业页路径里有 `/webExamList/dohomework/`。AI 教学中心作业页路径里有 `/exam-hub/` 和 `answer-homework`。
+普通作业页路径里有 `/webExamList/dohomework/` 或 `/webExamList/doexamination/`。AI 教学中心作业页路径里有 `/exam-hub/` 和 `answer-homework`。
 
 更细的操作步骤见 [使用说明](使用说明.md)。源码仓库：[Gitee](https://gitee.com/Syhaswm/zhihuishu-answer) · [GitHub](https://github.com/Syhaswm/zhihuishu-answer)。安装包：[Gitee Releases](https://gitee.com/Syhaswm/zhihuishu-answer/releases) · [GitHub Releases](https://github.com/Syhaswm/zhihuishu-answer/releases)（内容同步）。
 

@@ -1049,7 +1049,7 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
           <TextArea
             :value="url"
             :rows="5"
-            placeholder="每行粘贴一个作业做题页地址。普通作业页和 AI 教学中心答题页都可以。"
+            placeholder="每行粘贴一个作业做题页地址。普通作业、考试页和 AI 教学中心答题页都可以。"
             @change="(value) => (url = value)"
           />
         </div>
