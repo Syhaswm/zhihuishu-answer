@@ -1,6 +1,7 @@
 """打出一个自带 Python 的安装包。别人安装后不需要再装 Python。"""
 
 import os
+import re
 import shutil
 import subprocess
 import zipfile
@@ -153,7 +154,39 @@ def assemble():
     exe = ROOT / "src-tauri" / "target" / "release" / "zhihuishu-answer.exe"
     if not exe.exists():
         raise SystemExit("还没有正式版窗口程序，请先 cargo build --release")
+    expected = _expected_app_version()
+    if expected:
+        actual = _read_exe_product_version(exe)
+        if actual and actual != expected:
+            raise SystemExit(
+                f"窗口程序版本是 {actual}，与 Cargo.toml 的 {expected} 不一致。"
+                "请先 cargo build --release 再打包。"
+            )
     shutil.copy2(exe, PORTABLE / "智慧树答题.exe")
+
+
+def _expected_app_version():
+    text = (ROOT / "src-tauri" / "Cargo.toml").read_text(encoding="utf-8")
+    match = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
+    return match.group(1) if match else ""
+
+
+def _read_exe_product_version(path: Path) -> str:
+    if os.name != "nt":
+        return ""
+    script = (
+        f"(Get-Item -LiteralPath {str(path)!r}).VersionInfo.ProductVersion"
+    )
+    try:
+        out = subprocess.check_output(
+            ["powershell", "-NoProfile", "-Command", script],
+            text=True,
+            encoding="utf-8",
+            errors="ignore",
+        )
+    except subprocess.CalledProcessError:
+        return ""
+    return (out or "").strip().split("\n")[0].strip()
 
 
 def webview2():
