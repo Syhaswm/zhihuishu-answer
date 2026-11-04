@@ -315,6 +315,7 @@ pub fn run() {
     let token = random_token();
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(AppSecrets {
             token: token.clone(),

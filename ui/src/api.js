@@ -111,6 +111,22 @@ export function checkUpdate(current) {
   });
 }
 
+export function downloadUpdatePackage(url, path) {
+  return request("/api/update/download", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url, path }),
+  });
+}
+
+export function runUpdateInstaller(path) {
+  return request("/api/update/run-installer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  });
+}
+
 export function loadSettings() {
   return request("/api/settings");
 }

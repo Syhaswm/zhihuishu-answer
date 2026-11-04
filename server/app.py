@@ -147,6 +147,15 @@ class UpdateIn(BaseModel):
     current: str = ""
 
 
+class UpdateDownloadIn(BaseModel):
+    url: str
+    path: str
+
+
+class UpdateRunIn(BaseModel):
+    path: str
+
+
 class ModelsIn(BaseModel):
     provider: str = "deepseek"
     baseUrl: str = ""
@@ -274,8 +283,8 @@ def model_usage(body: ModelsIn):
 def _setup_download_gitee(payload):
     for asset in payload.get("assets") or []:
         name = str(asset.get("name") or "")
-        if name.endswith("Setup.exe"):
-            url = str(asset.get("browser_download_url") or "")
+        if "Setup.exe" in name or name.endswith("Setup.exe"):
+            url = str(asset.get("browser_download_url") or asset.get("url") or "")
             if url:
                 return url
     tag = str(payload.get("tag_name") or "").lstrip("vV")
@@ -287,8 +296,8 @@ def _setup_download_gitee(payload):
 def _setup_download_github(payload):
     for asset in payload.get("assets") or []:
         name = str(asset.get("name") or "")
-        if name.endswith("Setup.exe"):
-            url = str(asset.get("browser_download_url") or "")
+        if "Setup.exe" in name or name.endswith("Setup.exe"):
+            url = str(asset.get("browser_download_url") or asset.get("url") or "")
             if url:
                 return url
     tag = str(payload.get("tag_name") or "").lstrip("vV")
@@ -376,8 +385,25 @@ def check_update(body: UpdateIn):
         "current": current,
         "latest": latest,
         "url": download,
+        "setupName": "智慧树答题-Setup.exe",
         "checkOk": True,
     }
+
+
+@app.post("/api/update/download")
+def download_update(body: UpdateDownloadIn):
+    try:
+        return api.download_update_file(body.url, body.path)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@app.post("/api/update/run-installer")
+def run_update_installer(body: UpdateRunIn):
+    try:
+        return api.launch_installer(body.path)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
 
 
 @app.post("/api/login")

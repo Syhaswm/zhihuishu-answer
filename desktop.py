@@ -321,6 +321,57 @@ class Api:
         webbrowser.open(target)
         return {"ok": True}
 
+    @staticmethod
+    def _allowed_setup_download(url):
+        text = str(url or "").strip().lower()
+        if not text.startswith(("http://", "https://")):
+            return False
+        hosts = (
+            "gitee.com/syhaswm/zhihuishu-answer/releases/download/",
+            "github.com/syhaswm/zhihuishu-answer/releases/download/",
+        )
+        if not any(part in text for part in hosts):
+            return False
+        return "setup.exe" in text or text.endswith(".exe")
+
+    def download_update_file(self, url, dest_path):
+        target = str(url or "").strip()
+        if not self._allowed_setup_download(target):
+            raise RuntimeError("安装包地址无效。请点「重试」重新检查更新。")
+        dest = Path(str(dest_path or "").strip())
+        if dest.suffix.lower() != ".exe":
+            raise RuntimeError("保存路径需要是 .exe 文件。")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        client = answer.session()
+        self._progress("正在下载安装包…")
+        response = client.get(target, stream=True, timeout=180)
+        response.raise_for_status()
+        total = int(response.headers.get("content-length") or 0)
+        done = 0
+        with dest.open("wb") as handle:
+            for chunk in response.iter_content(1024 * 256):
+                if not chunk:
+                    continue
+                handle.write(chunk)
+                done += len(chunk)
+                if total > 0:
+                    percent = min(100, int(done * 100 / total))
+                    self._progress(f"正在下载安装包… {percent}%")
+        if dest.stat().st_size < 1024 * 1024:
+            dest.unlink(missing_ok=True)
+            raise RuntimeError("下载不完整，请检查网络后重试。")
+        self._progress("安装包下载完成")
+        return {"ok": True, "path": str(dest), "size": dest.stat().st_size}
+
+    def launch_installer(self, path):
+        exe = Path(str(path or "").strip())
+        if not exe.is_file():
+            raise RuntimeError("找不到安装包，请重新下载。")
+        if exe.suffix.lower() != ".exe":
+            raise RuntimeError("只能运行 Setup.exe 安装包。")
+        subprocess.Popen([str(exe)], cwd=str(exe.parent))
+        return {"ok": True}
+
     def _progress(self, message):
         if self._batch_label:
             message = self._batch_label + message

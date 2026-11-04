@@ -55,6 +55,7 @@ let fullFetchConfirmPending = null;
 const updateInfo = ref(null);
 const updateCheckFailed = ref("");
 const checkingUpdate = ref(false);
+const downloadingUpdate = ref(false);
 const appVersionText = ref("");
 const selectedQuestionN = ref(null);
 const selectedPartIndex = ref(0);
@@ -595,12 +596,38 @@ async function testConnection() {
 }
 
 async function downloadUpdate() {
-  const url = updateInfo.value && updateInfo.value.url;
-  if (!url) return;
+  const info = updateInfo.value;
+  if (!info?.url) return;
+  if (!(await runningInTauri())) {
+    Toast.warning("请在桌面版里下载更新。");
+    return;
+  }
+  downloadingUpdate.value = true;
   try {
-    await api.openUrl(url);
+    const { save } = await import("@tauri-apps/plugin-dialog");
+    const defaultName = info.setupName || `智慧树答题-Setup-v${info.latest || ""}.exe`;
+    const savePath = await save({
+      defaultPath: defaultName,
+      filters: [{ name: "安装程序", extensions: ["exe"] }],
+      title: "保存安装包到",
+    });
+    if (!savePath) {
+      Toast.info("已取消下载");
+      return;
+    }
+    status.value = "正在下载安装包，请稍候…";
+    const resp = await api.downloadUpdatePackage(info.url, savePath);
+    if (!resp.ok) throw new Error(resp.error || "下载失败");
+    status.value = "下载完成，正在打开安装向导…";
+    const run = await api.runUpdateInstaller(resp.path || savePath);
+    if (!run.ok) throw new Error(run.error || "无法启动安装程序");
+    Toast.success("安装向导已打开，请在向导里选择安装位置。");
+    updateInfo.value = null;
   } catch (err) {
-    window.open(url, "_blank");
+    error.value = err.message || String(err);
+    Toast.warning(error.value);
+  } finally {
+    downloadingUpdate.value = false;
   }
 }
 
@@ -980,7 +1007,9 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
 
       <div v-if="updateInfo" class="update-bar">
         <span>发现新版本 {{ updateInfo.latest }}，当前是 {{ updateInfo.current }}。</span>
-        <Button size="small" theme="solid" type="primary" @click="downloadUpdate">下载更新</Button>
+        <Button size="small" theme="solid" type="primary" :loading="downloadingUpdate" @click="downloadUpdate">
+          下载更新
+        </Button>
         <Button size="small" @click="updateInfo = null">关闭</Button>
       </div>
       <div v-if="updateCheckFailed" class="update-bar update-bar--warn">
@@ -1417,7 +1446,9 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
         <h2>贴边做题</h2>
         <p>在「贴边做题」里选贴在屏幕左侧或右侧。窗口会收成窄栏并占满工作区高度，可选「窗口置顶」以免被挡住。贴边时顶部有「作业地址」面板可粘贴链接并获取答案，可点「收起地址」隐藏；「设置」展开模型等选项。下次打开会记住上次模式。切屏是否被平台记录与贴边无关，见 README 说明。</p>
         <h2>检查更新</h2>
-        <p>标题旁会显示当前版本号（如 v1.7.6）。打开软件时会自动检查 Gitee 是否有新版本；也可随时点右上角「更新」。若网络异常，顶部会出现橙色提示，可点「重试」。启动后若本机答题服务尚未就绪，会自动等待再检查，一般无需手动重试。</p>
+        <p>
+          标题旁会显示当前版本号。发现新版本后点「下载更新」，先选择安装包保存位置（可保存到 D 盘等），下载完成后会自动打开安装向导；向导里可以改安装目录，默认在用户文件夹而不是整盘 C 盘根目录。安装时请勿使用静默参数，以便选择路径。
+        </p>
         <h2>快捷键复制（贴边做题）</h2>
         <p>
           获取答案后，在题目区域点一下某道题或某一空（会高亮）。焦点留在浏览器时，按
