@@ -295,15 +295,10 @@ function scrollTarget() {
 
 async function loadSettings() {
   let data = null;
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    try {
-      data = await api.loadSettings();
-      break;
-    } catch (err) {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    }
-  }
-  if (!data) {
+  try {
+    await api.waitForApi();
+    data = await api.loadSettings();
+  } catch (err) {
     status.value = "答题服务还没启动，请稍等再打开一次。";
     return;
   }
@@ -627,19 +622,18 @@ function retryUpdateCheck() {
   runUpdateCheck({ toast: true, clearFailed: true });
 }
 
-onMounted(() => {
-  loadSettings();
-  api
-    .appVersion()
-    .then((current) => {
-      appVersionText.value = current || "";
-      return runUpdateCheck({ toast: false, clearFailed: true });
-    })
-    .catch(() => {
-      updateCheckFailed.value = "检查更新失败，请确认本机答题服务正常。";
-    });
+onMounted(async () => {
   registerCopyHotkey(() => copyHotkeyAnswer()).catch(() => {});
   refreshCheckpointPending();
+  try {
+    appVersionText.value = (await api.appVersion()) || "";
+  } catch {
+    appVersionText.value = "";
+  }
+  await loadSettings();
+  if (appVersionText.value) {
+    await runUpdateCheck({ toast: false, clearFailed: true });
+  }
 });
 
 onUnmounted(() => {
@@ -1366,7 +1360,7 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
         <h2>贴边做题</h2>
         <p>在「贴边做题」里选贴在屏幕左侧或右侧。窗口会收成窄栏并占满工作区高度，可选「窗口置顶」以免被挡住。贴边时顶部有「作业地址」面板可粘贴链接并获取答案，可点「收起地址」隐藏；「设置」展开模型等选项。下次打开会记住上次模式。切屏是否被平台记录与贴边无关，见 README 说明。</p>
         <h2>检查更新</h2>
-        <p>标题旁会显示当前版本号（如 v1.7.6）。打开软件时会自动检查 Gitee 是否有新版本；也可随时点右上角「检查更新」。若网络异常，顶部会出现橙色提示，可点「重试」。</p>
+        <p>标题旁会显示当前版本号（如 v1.7.6）。打开软件时会自动检查 Gitee 是否有新版本；也可随时点右上角「更新」。若网络异常，顶部会出现橙色提示，可点「重试」。启动后若本机答题服务尚未就绪，会自动等待再检查，一般无需手动重试。</p>
         <h2>快捷键复制（贴边做题）</h2>
         <p>
           获取答案后，在题目区域点一下某道题或某一空（会高亮）。焦点留在浏览器时，按

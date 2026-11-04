@@ -1,6 +1,10 @@
 const API = "http://127.0.0.1:8765";
 let appToken = "";
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function getToken() {
   if (appToken) return appToken;
   if (window.__ZHS_TOKEN__) {
@@ -53,6 +57,21 @@ async function request(path, options) {
     throw new Error(data.error);
   }
   return data;
+}
+
+/** 等本机 uvicorn 就绪后再调其它 API，避免启动瞬间误报失败。 */
+export async function waitForApi(maxAttempts = 40, intervalMs = 250) {
+  let lastError = null;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      await request("/api/health");
+      return;
+    } catch (err) {
+      lastError = err;
+      await sleep(intervalMs);
+    }
+  }
+  throw lastError || new Error("连不上本机答题服务。请关掉软件后重新打开。");
 }
 
 export async function appVersion() {
