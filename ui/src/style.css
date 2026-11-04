@@ -18,6 +18,86 @@ body {
   padding: 24px 28px 36px;
 }
 
+.page:has(.titlebar) {
+  padding-top: 56px;
+}
+
+.titlebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  display: flex;
+  align-items: stretch;
+  height: 32px;
+  background: #eceef1;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  user-select: none;
+}
+
+.titlebar-drag {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 10px;
+  min-width: 0;
+}
+
+.titlebar-icon {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.titlebar-text {
+  font-size: 12px;
+  color: #444;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.titlebar-actions {
+  display: flex;
+  align-items: stretch;
+  flex-shrink: 0;
+}
+
+.titlebar-btn {
+  border: none;
+  margin: 0;
+  padding: 0 14px;
+  min-width: 46px;
+  background: transparent;
+  color: #333;
+  font-size: 13px;
+  line-height: 32px;
+  cursor: pointer;
+}
+
+.titlebar-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.titlebar-btn--pin.is-active {
+  background: rgba(0, 122, 255, 0.12);
+  color: #0066cc;
+  font-weight: 600;
+}
+
+.titlebar-btn--close:hover {
+  background: #e81123;
+  color: #fff;
+}
+
+.page--dock:has(.titlebar) {
+  padding-top: 44px;
+}
+
 .shell {
   max-width: 980px;
   margin: 0 auto;

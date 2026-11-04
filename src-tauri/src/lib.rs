@@ -113,6 +113,17 @@ fn capture_window(window: &WebviewWindow) -> Result<SavedWindow, String> {
     })
 }
 
+fn apply_always_on_top(window: &WebviewWindow, enabled: bool) -> Result<(), String> {
+    window
+        .set_always_on_top(enabled)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_always_on_top(window: WebviewWindow, enabled: bool) -> Result<(), String> {
+    apply_always_on_top(&window, enabled)
+}
+
 #[tauri::command]
 fn dock_apply(
     window: WebviewWindow,
@@ -159,9 +170,7 @@ fn dock_apply(
     window
         .set_position(PhysicalPosition::new(x, y))
         .map_err(|e| e.to_string())?;
-    window
-        .set_always_on_top(always_on_top)
-        .map_err(|e| e.to_string())?;
+    apply_always_on_top(&window, always_on_top)?;
     apply_window_opacity(&window, opacity)?;
     *active = true;
     Ok(())
@@ -318,6 +327,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             api_token,
             app_version,
+            set_always_on_top,
             dock_apply,
             dock_restore,
             set_window_opacity

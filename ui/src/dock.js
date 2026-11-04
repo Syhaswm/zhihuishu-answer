@@ -23,6 +23,12 @@ export async function applyWindowOpacity(percent = 100) {
   await invoke("set_window_opacity", { opacity: normalizeOpacity(percent) });
 }
 
+export async function applyAlwaysOnTop(enabled = true) {
+  if (!(await runningInTauri())) return;
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("set_always_on_top", { enabled: !!enabled });
+}
+
 export async function applyDockLayout(
   side,
   width = DOCK_WIDTH_DEFAULT,
@@ -34,6 +40,7 @@ export async function applyDockLayout(
   const mode = String(side || "off").toLowerCase();
   if (mode === "off") {
     await invoke("dock_restore");
+    await applyAlwaysOnTop(alwaysOnTop);
     return;
   }
   if (mode !== "left" && mode !== "right") {

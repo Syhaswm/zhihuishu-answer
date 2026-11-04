@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { BackTop, Banner, Button, Card, Checkbox, Input, Modal, Pagination, Select, Switch, Tag, TextArea, Toast } from "@kousum/semi-ui-vue";
 import * as api from "./api";
-import { applyDockLayout, applyWindowOpacity, DOCK_WIDTH_DEFAULT } from "./dock";
+import { applyAlwaysOnTop, applyDockLayout, applyWindowOpacity, DOCK_WIDTH_DEFAULT, runningInTauri } from "./dock";
 import { registerCopyHotkey, unregisterCopyHotkey, writeClipboard } from "./hotkey";
 
 const url = ref("");
@@ -63,6 +63,7 @@ const keyPage = "https://platform.deepseek.com/api_keys";
 const dockSide = ref("off");
 const dockWidth = ref(DOCK_WIDTH_DEFAULT);
 const dockOnTop = ref(true);
+const tauriChrome = ref(false);
 const dockOpacity = ref(100);
 const dockOpacityOptions = [
   { value: 100, label: "不透明" },
@@ -335,6 +336,12 @@ async function loadSettings() {
     } catch (err) {
       Toast.warning(err.message || "贴边模式没能应用，请再选一次。");
     }
+  } else {
+    try {
+      await applyAlwaysOnTop(dockOnTop.value);
+    } catch (err) {
+      Toast.warning(err.message || "置顶设置失败");
+    }
   }
 }
 
@@ -369,13 +376,40 @@ async function changeDockSide(value) {
 
 async function changeDockOnTop(event) {
   dockOnTop.value = isChecked(event);
-  if (!isDocked.value) return;
   try {
     await api.setDockPref(dockSide.value, dockWidth.value, dockOnTop.value, dockOpacity.value);
-    await applyDockLayout(dockSide.value, dockWidth.value, dockOnTop.value, dockOpacity.value);
+    if (isDocked.value) {
+      await applyDockLayout(dockSide.value, dockWidth.value, dockOnTop.value, dockOpacity.value);
+    } else {
+      await applyAlwaysOnTop(dockOnTop.value);
+    }
   } catch (err) {
     Toast.warning(err.message || "置顶设置失败");
   }
+}
+
+async function toggleTitlebarPin() {
+  await changeDockOnTop({ target: { checked: !dockOnTop.value } });
+}
+
+async function windowMinimize() {
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  await getCurrentWindow().minimize();
+}
+
+async function windowToggleMaximize() {
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  const win = getCurrentWindow();
+  if (await win.isMaximized()) {
+    await win.unmaximize();
+  } else {
+    await win.maximize();
+  }
+}
+
+async function windowClose() {
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  await getCurrentWindow().close();
 }
 
 async function changeDockOpacity(value) {
@@ -623,6 +657,7 @@ function retryUpdateCheck() {
 }
 
 onMounted(async () => {
+  tauriChrome.value = await runningInTauri();
   registerCopyHotkey(() => copyHotkeyAnswer()).catch(() => {});
   refreshCheckpointPending();
   try {
@@ -900,6 +935,26 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
 
 <template>
   <div ref="scroller" class="page" :class="pageDisplayClasses">
+    <div v-if="tauriChrome" class="titlebar">
+      <div class="titlebar-drag" data-tauri-drag-region>
+        <img class="titlebar-icon" src="/icon.png" alt="" />
+        <span class="titlebar-text">智慧树答题</span>
+      </div>
+      <div class="titlebar-actions">
+        <button
+          type="button"
+          class="titlebar-btn titlebar-btn--pin"
+          :class="{ 'is-active': dockOnTop }"
+          title="窗口总在最前"
+          @click="toggleTitlebarPin"
+        >
+          置顶
+        </button>
+        <button type="button" class="titlebar-btn" title="最小化" @click="windowMinimize">—</button>
+        <button type="button" class="titlebar-btn" title="最大化" @click="windowToggleMaximize">□</button>
+        <button type="button" class="titlebar-btn titlebar-btn--close" title="关闭" @click="windowClose">×</button>
+      </div>
+    </div>
     <div class="shell">
       <header class="brand" :class="{ 'brand--dock': isDocked }">
         <img class="logo" src="/icon.png" alt="" />
@@ -1357,6 +1412,8 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
           <li>一次只显示一份作业，用分页切换到下一份。选择题会把正确选项标成绿色。填空题按网页上的空分成多行，每行有「复制」。</li>
           <li>打开「保存到答案文件夹」后，每份答案写成一个 txt。关掉后只在窗口里显示，不写文件。已有文件可以勾选删除，或点「删除全部答案」清掉整个文件夹。点「复制本份」只复制这一份。提交前自己核对一遍。</li>
         </ol>
+        <h2>窗口置顶</h2>
+        <p>标题栏右侧有「置顶」按钮，常规窗口和贴边模式都可以一键开关总在最前。贴边设置里仍保留同一开关。下次打开会记住上次选择。</p>
         <h2>贴边做题</h2>
         <p>在「贴边做题」里选贴在屏幕左侧或右侧。窗口会收成窄栏并占满工作区高度，可选「窗口置顶」以免被挡住。贴边时顶部有「作业地址」面板可粘贴链接并获取答案，可点「收起地址」隐藏；「设置」展开模型等选项。下次打开会记住上次模式。切屏是否被平台记录与贴边无关，见 README 说明。</p>
         <h2>检查更新</h2>
