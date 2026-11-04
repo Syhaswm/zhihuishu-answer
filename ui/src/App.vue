@@ -973,9 +973,15 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
           class="titlebar-btn titlebar-btn--pin"
           :class="{ 'is-active': dockOnTop }"
           title="窗口总在最前"
+          aria-label="窗口总在最前"
           @click="toggleTitlebarPin"
         >
-          置顶
+          <svg class="titlebar-pin-icon" viewBox="0 0 16 16" aria-hidden="true">
+            <path
+              fill="currentColor"
+              d="M9.5 1.5a1.5 1.5 0 0 0-3 0v4.09L4.03 7.47a.75.75 0 0 0-.53.64l-.25 2.5a.75.75 0 0 0 .92.81L6 10.56V14.25a.75.75 0 0 0 1.5 0v-3.69l1.83.45a.75.75 0 0 0 .92-.81l-.25-2.5a.75.75 0 0 0-.53-.64L9.5 5.59V1.5Z"
+            />
+          </svg>
         </button>
         <button type="button" class="titlebar-btn" title="最小化" @click="windowMinimize">—</button>
         <button type="button" class="titlebar-btn" title="最大化" @click="windowToggleMaximize">□</button>
@@ -1442,7 +1448,7 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
           <li>打开「保存到答案文件夹」后，每份答案写成一个 txt。关掉后只在窗口里显示，不写文件。已有文件可以勾选删除，或点「删除全部答案」清掉整个文件夹。点「复制本份」只复制这一份。提交前自己核对一遍。</li>
         </ol>
         <h2>窗口置顶</h2>
-        <p>标题栏右侧有「置顶」按钮，常规窗口和贴边模式都可以一键开关总在最前。贴边设置里仍保留同一开关。下次打开会记住上次选择。</p>
+        <p>标题栏右侧图钉图标可开关「总在最前」，常规窗口与贴边模式共用；贴边设置里仍保留文字开关。下次打开会记住上次选择。</p>
         <h2>贴边做题</h2>
         <p>在「贴边做题」里选贴在屏幕左侧或右侧。窗口会收成窄栏并占满工作区高度，可选「窗口置顶」以免被挡住。贴边时顶部有「作业地址」面板可粘贴链接并获取答案，可点「收起地址」隐藏；「设置」展开模型等选项。下次打开会记住上次模式。切屏是否被平台记录与贴边无关，见 README 说明。</p>
         <h2>检查更新</h2>

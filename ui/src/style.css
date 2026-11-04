@@ -83,10 +83,27 @@ body {
   background: rgba(0, 0, 0, 0.06);
 }
 
+.titlebar-btn--pin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  padding: 0 10px;
+}
+
+.titlebar-pin-icon {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
 .titlebar-btn--pin.is-active {
   background: rgba(0, 122, 255, 0.12);
   color: #0066cc;
-  font-weight: 600;
+}
+
+.titlebar-btn--pin.is-active .titlebar-pin-icon {
+  transform: rotate(-45deg);
 }
 
 .titlebar-btn--close:hover {
