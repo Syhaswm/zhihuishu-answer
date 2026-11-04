@@ -599,29 +599,15 @@ async function downloadUpdate() {
   const info = updateInfo.value;
   if (!info?.url) return;
   if (!(await runningInTauri())) {
-    Toast.warning("请在桌面版里下载更新。");
+    Toast.warning("请在桌面版里使用「下载更新」。");
     return;
   }
   downloadingUpdate.value = true;
+  status.value = "正在下载更新，完成后会自动打开安装向导…";
   try {
-    const { save } = await import("@tauri-apps/plugin-dialog");
-    const defaultName = info.setupName || `智慧树答题-Setup-v${info.latest || ""}.exe`;
-    const savePath = await save({
-      defaultPath: defaultName,
-      filters: [{ name: "安装程序", extensions: ["exe"] }],
-      title: "保存安装包到",
-    });
-    if (!savePath) {
-      Toast.info("已取消下载");
-      return;
-    }
-    status.value = "正在下载安装包，请稍候…";
-    const resp = await api.downloadUpdatePackage(info.url, savePath);
-    if (!resp.ok) throw new Error(resp.error || "下载失败");
-    status.value = "下载完成，正在打开安装向导…";
-    const run = await api.runUpdateInstaller(resp.path || savePath);
-    if (!run.ok) throw new Error(run.error || "无法启动安装程序");
-    Toast.success("安装向导已打开，请在向导里选择安装位置。");
+    const resp = await api.installUpdate(info.url, info.latest);
+    if (!resp.ok) throw new Error(resp.error || "更新失败");
+    Toast.success("安装向导已打开：请选择安装目录（可与原目录相同以覆盖升级），按向导完成即可。");
     updateInfo.value = null;
   } catch (err) {
     error.value = err.message || String(err);
@@ -1453,7 +1439,7 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
         <p>在「贴边做题」里选贴在屏幕左侧或右侧。窗口会收成窄栏并占满工作区高度，可选「窗口置顶」以免被挡住。贴边时顶部有「作业地址」面板可粘贴链接并获取答案，可点「收起地址」隐藏；「设置」展开模型等选项。下次打开会记住上次模式。切屏是否被平台记录与贴边无关，见 README 说明。</p>
         <h2>检查更新</h2>
         <p>
-          标题旁会显示当前版本号。发现新版本后点「下载更新」，先选择安装包保存位置（可保存到 D 盘等），下载完成后会自动打开安装向导；向导里可以改安装目录，默认在用户文件夹而不是整盘 C 盘根目录。安装时请勿使用静默参数，以便选择路径。
+          发现新版本后点「下载更新」：软件会在后台下载安装包（不打开浏览器、不用先保存 exe），下完后自动弹出安装向导；在向导里选择安装目录（可与当前相同以覆盖升级）并完成安装即可。
         </p>
         <h2>快捷键复制（贴边做题）</h2>
         <p>

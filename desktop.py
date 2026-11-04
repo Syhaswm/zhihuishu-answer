@@ -5,9 +5,11 @@ import ctypes
 import functools
 from contextlib import nullcontext
 import json
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import webbrowser
@@ -362,6 +364,13 @@ class Api:
             raise RuntimeError("下载不完整，请检查网络后重试。")
         self._progress("安装包下载完成")
         return {"ok": True, "path": str(dest), "size": dest.stat().st_size}
+
+    def install_update(self, url, version=""):
+        safe = re.sub(r"[^\d.]", "", str(version or "")) or "latest"
+        dest = Path(tempfile.gettempdir()) / f"zhihuishu-answer-setup-v{safe}.exe"
+        result = self.download_update_file(url, str(dest))
+        self.launch_installer(result["path"])
+        return {"ok": True, "path": result["path"], "size": result.get("size", 0)}
 
     def launch_installer(self, path):
         exe = Path(str(path or "").strip())

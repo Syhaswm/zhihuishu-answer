@@ -149,7 +149,12 @@ class UpdateIn(BaseModel):
 
 class UpdateDownloadIn(BaseModel):
     url: str
-    path: str
+    path: str = ""
+
+
+class UpdateInstallIn(BaseModel):
+    url: str
+    version: str = ""
 
 
 class UpdateRunIn(BaseModel):
@@ -393,7 +398,17 @@ def check_update(body: UpdateIn):
 @app.post("/api/update/download")
 def download_update(body: UpdateDownloadIn):
     try:
-        return api.download_update_file(body.url, body.path)
+        if str(body.path or "").strip():
+            return api.download_update_file(body.url, body.path)
+        raise RuntimeError("请使用 /api/update/install 进行应用内更新。")
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@app.post("/api/update/install")
+def install_update(body: UpdateInstallIn):
+    try:
+        return api.install_update(body.url, body.version)
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 
