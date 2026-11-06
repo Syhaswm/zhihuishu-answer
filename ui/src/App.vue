@@ -603,11 +603,11 @@ async function downloadUpdate() {
     return;
   }
   downloadingUpdate.value = true;
-  status.value = "正在下载更新，完成后会自动打开安装向导…";
+  status.value = "正在下载并覆盖安装到当前目录，完成后软件会自动关闭并重新打开…";
   try {
     const resp = await api.installUpdate(info.url, info.latest);
     if (!resp.ok) throw new Error(resp.error || "更新失败");
-    Toast.success("安装向导已打开：请选择安装目录（可与原目录相同以覆盖升级），按向导完成即可。");
+    Toast.success("已开始覆盖安装，软件即将关闭并自动重新打开。");
     updateInfo.value = null;
   } catch (err) {
     error.value = err.message || String(err);
@@ -1000,7 +1000,7 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
       <div v-if="updateInfo" class="update-bar">
         <span>发现新版本 {{ updateInfo.latest }}，当前是 {{ updateInfo.current }}。</span>
         <Button size="small" theme="solid" type="primary" :loading="downloadingUpdate" @click="downloadUpdate">
-          下载更新
+          立即更新
         </Button>
         <Button size="small" @click="updateInfo = null">关闭</Button>
       </div>
@@ -1439,7 +1439,7 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
         <p>在「贴边做题」里选贴在屏幕左侧或右侧。窗口会收成窄栏并占满工作区高度，可选「窗口置顶」以免被挡住。贴边时顶部有「作业地址」面板可粘贴链接并获取答案，可点「收起地址」隐藏；「设置」展开模型等选项。下次打开会记住上次模式。切屏是否被平台记录与贴边无关，见 README 说明。</p>
         <h2>检查更新</h2>
         <p>
-          发现新版本后点「下载更新」：软件会在后台下载安装包（不打开浏览器、不用先保存 exe），下完后自动弹出安装向导；在向导里选择安装目录（可与当前相同以覆盖升级）并完成安装即可。
+          发现新版本后点「立即更新」：软件在后台下载安装包，并静默覆盖安装到当前软件所在目录，不打开浏览器、不弹出安装向导、不用选择路径。装完后程序会自动关闭并重新打开。
         </p>
         <h2>快捷键复制（贴边做题）</h2>
         <p>

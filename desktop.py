@@ -369,8 +369,77 @@ class Api:
         safe = re.sub(r"[^\d.]", "", str(version or "")) or "latest"
         dest = Path(tempfile.gettempdir()) / f"zhihuishu-answer-setup-v{safe}.exe"
         result = self.download_update_file(url, str(dest))
-        self.launch_installer(result["path"])
-        return {"ok": True, "path": result["path"], "size": result.get("size", 0)}
+        install_dir = self._current_install_dir()
+        self._progress("正在覆盖安装到当前目录，软件会自动关闭并重新打开…")
+        self._launch_silent_install(Path(result["path"]), install_dir)
+        return {
+            "ok": True,
+            "path": result["path"],
+            "installDir": str(install_dir),
+            "size": result.get("size", 0),
+        }
+
+    def _current_install_dir(self):
+        root = answer.ROOT.resolve()
+        if not (root / "智慧树答题.exe").is_file():
+            raise RuntimeError("当前不是已安装的桌面版，无法覆盖到软件所在目录。")
+        return root
+
+    def _launch_silent_install(self, setup, install_dir):
+        app = install_dir / "智慧树答题.exe"
+        log = Path(tempfile.gettempdir()) / "zhihuishu-answer-update.log"
+        script = Path(tempfile.gettempdir()) / "zhihuishu-answer-apply-update.ps1"
+
+        def ps(value):
+            return "'" + str(value).replace("'", "''") + "'"
+
+        script.write_text(
+            "\n".join(
+                [
+                    "$ErrorActionPreference = 'Stop'",
+                    f"$log = {ps(log)}",
+                    f"$setup = {ps(setup)}",
+                    f"$dir = {ps(install_dir)}",
+                    f"$app = {ps(app)}",
+                    "try {",
+                    "  $psi = New-Object System.Diagnostics.ProcessStartInfo",
+                    "  $psi.FileName = $setup",
+                    "  $psi.Arguments = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /DIR=\"' + $dir + '\"'",
+                    "  $psi.UseShellExecute = $true",
+                    "  $proc = [Diagnostics.Process]::Start($psi)",
+                    "  $proc.WaitForExit()",
+                    "  Set-Content -LiteralPath $log -Value (\"exit \" + $proc.ExitCode) -Encoding utf8",
+                    "  if ($proc.ExitCode -eq 0 -and (Test-Path -LiteralPath $app)) {",
+                    "    Start-Process -FilePath $app",
+                    "  }",
+                    "} catch {",
+                    "  $_ | Out-File -LiteralPath $log -Encoding utf8",
+                    "}",
+                    "",
+                ]
+            ),
+            encoding="utf-8-sig",
+        )
+        subprocess.Popen(
+            [
+                "cmd",
+                "/c",
+                "start",
+                "",
+                "/min",
+                "powershell.exe",
+                "-NoProfile",
+                "-WindowStyle",
+                "Hidden",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(script),
+            ],
+            cwd=str(Path(tempfile.gettempdir())),
+            creationflags=0x08000000,
+            close_fds=True,
+        )
 
     def launch_installer(self, path):
         exe = Path(str(path or "").strip())
@@ -378,7 +447,7 @@ class Api:
             raise RuntimeError("找不到安装包，请重新下载。")
         if exe.suffix.lower() != ".exe":
             raise RuntimeError("只能运行 Setup.exe 安装包。")
-        subprocess.Popen([str(exe)], cwd=str(exe.parent))
+        self._launch_silent_install(exe, self._current_install_dir())
         return {"ok": True}
 
     def _progress(self, message):
