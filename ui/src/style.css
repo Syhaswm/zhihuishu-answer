@@ -687,6 +687,43 @@ body {
   margin: 0 2px 12px;
 }
 
+.paper-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.recent-urls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.recent-urls .field-label {
+  width: 100%;
+}
+
+.recent-url {
+  max-width: 100%;
+  padding: 2px 8px;
+  border: 1px solid var(--semi-color-border, #e6e8ea);
+  border-radius: 999px;
+  background: var(--semi-color-fill-0, #f7f8f9);
+  color: var(--semi-color-text-0, #1c1f23);
+  font-size: 12px;
+  line-height: 20px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.question-tools {
+  margin: 0 2px 10px;
+}
+
 .paper-copy {
   min-width: 0;
 }

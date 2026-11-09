@@ -112,6 +112,49 @@ def apply_icon():
             user32.PostMessageW(hwnd, 0x80, 0, _ICON_HANDLE)
 
 
+def render_markdown(paper):
+    title = str(paper.get("title") or "作业").strip() or "作业"
+    course = str(paper.get("course") or "").strip()
+    head = f"{course} · {title}" if course else title
+    lines = [f"# {head}", ""]
+    note = str(paper.get("optionNote") or "").strip()
+    if note:
+        lines.extend([f"> {note}", ""])
+    for question in paper.get("questions") or []:
+        kind = str(question.get("type") or "").strip()
+        score = str(question.get("score") or "").strip()
+        score_bit = f" · {score}分" if score else ""
+        label = f"[{kind}{score_bit}]" if kind or score_bit else ""
+        lines.append(f"## {question.get('n')}. {label}".rstrip())
+        lines.append("")
+        stem = str(question.get("stem") or "").strip()
+        if stem:
+            lines.extend([stem, ""])
+        answers = [part.strip() for part in str(question.get("answer") or "").split("、") if part.strip()]
+        options = question.get("options") or []
+        for option in options:
+            mark = " **（答案）**" if option in answers else ""
+            lines.append(f"- {option}{mark}")
+        if options:
+            lines.append("")
+        parts = question.get("parts") or []
+        if parts:
+            for part in parts:
+                if not isinstance(part, dict):
+                    continue
+                name = str(part.get("label") or "答案").strip() or "答案"
+                text = str(part.get("text") or "").strip() or "（无）"
+                lines.append(f"**{name}** {text}")
+        elif answers:
+            lines.append("**答案** " + "、".join(answers))
+        reason = str(question.get("reason") or "").strip()
+        if reason:
+            lines.extend(["", f"解析：{reason}"])
+        lines.append("")
+    lines.append("答案由模型生成，提交前请自行核对。程序不会交卷。")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 class Api:
     def __init__(self):
         self._main = None
@@ -167,9 +210,68 @@ class Api:
             "dockOpacity": dock_opacity,
             "answerShowReason": bool(pref.get("answerShowReason", False)),
             "answerFontSize": font_size,
+            "recentUrls": self._recent_urls(pref),
             "providers": answer.PROVIDERS,
             "files": self._answer_files(),
         }
+
+    def remember_recent_urls(self, items):
+        data = self._read_pref()
+        existing = self._recent_urls(data)
+        incoming = []
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            target = str(item.get("url") or "").strip()
+            if not target.startswith(("http://", "https://")):
+                continue
+            title = re.sub(r"\s+", " ", str(item.get("title") or "").strip())[:80]
+            incoming.append({"url": target, "title": title})
+        merged = []
+        seen = set()
+        for item in incoming + existing:
+            if item["url"] in seen:
+                continue
+            seen.add(item["url"])
+            merged.append(item)
+            if len(merged) >= 12:
+                break
+        data["recentUrls"] = merged
+        self._pref_path().write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        return {"ok": True, "recentUrls": merged}
+
+    @staticmethod
+    def _recent_urls(pref):
+        raw = pref.get("recentUrls") if isinstance(pref, dict) else None
+        if not isinstance(raw, list):
+            return []
+        found = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            target = str(item.get("url") or "").strip()
+            if not target.startswith(("http://", "https://")):
+                continue
+            found.append({
+                "url": target,
+                "title": re.sub(r"\s+", " ", str(item.get("title") or "").strip())[:80],
+            })
+            if len(found) >= 12:
+                break
+        return found
+
+    def export_markdown(self, paper):
+        if not isinstance(paper, dict):
+            raise RuntimeError("没有可导出的作业。")
+        questions = paper.get("questions") or []
+        if not questions:
+            raise RuntimeError("这份作业还没有题目，无法导出。")
+        folder = self._answer_dir()
+        folder.mkdir(parents=True, exist_ok=True)
+        name = self._markdown_filename(paper)
+        path = folder / name
+        path.write_text(render_markdown(paper), encoding="utf-8")
+        return {"ok": True, "file": path.name, "path": str(path), "files": self._answer_files()}
 
     def set_display_pref(self, show_reason=None, font_size=None):
         data = self._read_pref()
@@ -283,12 +385,20 @@ class Api:
         data["keys"] = keys
         self._pref_path().write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
+    def _markdown_filename(self, paper):
+        title = str(paper.get("title") or "作业").strip()
+        course = str(paper.get("course") or "").strip()
+        head = f"{course} · {title}" if course else title
+        head = re.sub(r'[<>:"/\\|?*\r\n]', " ", head)
+        head = re.sub(r"\s+", " ", head).strip(" .")[:50] or "作业"
+        return f"{head}.md"
+
     def _answer_dir(self):
         return answer.ROOT / "答案"
 
     def _answer_file(self, name, folder):
         text = str(name or "").strip()
-        if not text or text != Path(text).name or not text.lower().endswith(".txt"):
+        if not text or text != Path(text).name or not text.lower().endswith((".txt", ".md")):
             return None
         path = (folder / text).resolve()
         if path.parent != folder or not path.is_file():
@@ -300,7 +410,9 @@ class Api:
         if not folder.is_dir():
             return []
         files = []
-        for path in sorted(folder.glob("*.txt")):
+        for path in sorted(folder.iterdir()):
+            if path.suffix.lower() not in (".txt", ".md"):
+                continue
             if path.is_file():
                 files.append({"name": path.name, "size": path.stat().st_size})
         return files

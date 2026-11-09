@@ -139,6 +139,22 @@ class FullFetchConfirmIn(BaseModel):
     retryFailedOnly: bool = False
 
 
+class RecentItem(BaseModel):
+    url: str = ""
+    title: str = ""
+
+
+class RecentIn(BaseModel):
+    items: list[RecentItem] = []
+
+
+class MarkdownIn(BaseModel):
+    course: str = ""
+    title: str = ""
+    optionNote: str = ""
+    questions: list = []
+
+
 class LoginIn(BaseModel):
     switch: bool = False
 
@@ -207,6 +223,19 @@ def set_dock(body: DockIn):
 @app.post("/api/settings/display")
 def set_display(body: DisplayIn):
     return api.set_display_pref(body.showReason, body.fontSize)
+
+
+@app.post("/api/settings/recent")
+def remember_recent(body: RecentIn):
+    return api.remember_recent_urls([item.model_dump() for item in body.items])
+
+
+@app.post("/api/answers/markdown")
+def export_markdown(body: MarkdownIn):
+    try:
+        return api.export_markdown(body.model_dump())
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
 
 
 @app.post("/api/checkpoint/clear")

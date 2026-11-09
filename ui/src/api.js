@@ -123,6 +123,27 @@ export function loadSettings() {
   return request("/api/settings");
 }
 
+export function rememberRecent(items) {
+  return request("/api/settings/recent", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ items }),
+  });
+}
+
+export function exportMarkdown(paper) {
+  return request("/api/answers/markdown", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      course: paper.course || "",
+      title: paper.title || "",
+      optionNote: paper.optionNote || "",
+      questions: paper.questions || [],
+    }),
+  });
+}
+
 export function setSaveAnswers(enabled) {
   return request("/api/settings/save", {
     method: "POST",

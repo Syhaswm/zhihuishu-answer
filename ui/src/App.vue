@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { BackTop, Banner, Button, Card, Checkbox, Input, Modal, Pagination, Select, Switch, Tag, TextArea, Toast } from "@kousum/semi-ui-vue";
 import * as api from "./api";
 import { applyAlwaysOnTop, applyDockLayout, applyWindowOpacity, DOCK_WIDTH_DEFAULT, runningInTauri } from "./dock";
@@ -43,6 +43,9 @@ const resumeCheckpoint = ref(true);
 const pendingRetryCount = ref(0);
 const pendingRetryHint = ref("");
 const answerFiles = ref([]);
+const recentUrls = ref([]);
+const questionQuery = ref("");
+const exportingMarkdown = ref(false);
 const showAllFiles = ref(false);
 const selectedFiles = ref([]);
 const confirmAll = ref(false);
@@ -128,11 +131,21 @@ function showQuestionReason(question) {
   return answerShowReason.value && question?.reason;
 }
 
-const dockQuestions = computed(() => {
+const matchedQuestions = computed(() => {
   const paper = currentPaper.value;
-  if (!paper?.questions?.length) return [];
-  return paper.questions;
+  const list = paper?.questions || [];
+  const query = questionQuery.value.trim().toLowerCase();
+  if (!query) return list;
+  return list.filter((item) => {
+    const blob = [item.n, item.type, item.stem, item.answer, item.reason]
+      .concat(item.options || [])
+      .join("\n")
+      .toLowerCase();
+    return blob.includes(query);
+  });
 });
+
+const dockQuestions = computed(() => matchedQuestions.value);
 
 const dockQuestionIndex = computed(() => {
   const qs = dockQuestions.value;
@@ -221,10 +234,19 @@ watch([isDocked, dockQuestions], () => {
   if (isDocked.value) ensureDockSelection();
 });
 
+watch(questionQuery, () => {
+  const list = matchedQuestions.value;
+  if (!list.length) return;
+  if (!list.some((item) => item.n === selectedQuestionN.value)) {
+    selectQuestion(list[0], 0);
+  }
+});
+
 function showPage(next) {
   const total = papers.value.length;
   const value = Math.min(Math.max(Number(next) || 1, 1), total || 1);
   page.value = value;
+  questionQuery.value = "";
   selectedQuestionN.value = null;
   selectedPartIndex.value = 0;
   if (isDocked.value) ensureDockSelection();
@@ -235,6 +257,53 @@ function selectQuestion(question, partIndex = 0) {
   if (!question) return;
   selectedQuestionN.value = question.n;
   selectedPartIndex.value = partIndex;
+  nextTick(() => {
+    document.querySelector(".q-card--selected")?.scrollIntoView({ block: "nearest" });
+  });
+}
+
+function useRecent(item) {
+  const target = String(item?.url || "").trim();
+  if (!target) return;
+  const lines = url.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (lines.includes(target)) {
+    Toast.info("这条地址已经在输入框里");
+    return;
+  }
+  url.value = lines.length ? `${url.value.replace(/\s+$/, "")}\n${target}` : target;
+  Toast.success("已加入作业地址");
+}
+
+async function exportCurrentMarkdown() {
+  const paper = currentPaper.value;
+  if (!paper?.questions?.length) return;
+  exportingMarkdown.value = true;
+  try {
+    const data = await api.exportMarkdown(paper);
+    if (!data.ok) throw new Error(data.error || "导出失败");
+    if (Array.isArray(data.files)) answerFiles.value = data.files;
+    Toast.success(`已写入答案文件夹：${data.file}`);
+  } catch (err) {
+    Toast.warning(err.message || "导出失败");
+  } finally {
+    exportingMarkdown.value = false;
+  }
+}
+
+async function rememberPapers(list) {
+  const items = (list || [])
+    .filter((paper) => paper?.url)
+    .map((paper) => ({
+      url: paper.url,
+      title: paper.ok ? paperTitle(paper) : paper.title || "",
+    }));
+  if (!items.length) return;
+  try {
+    const saved = await api.rememberRecent(items);
+    if (Array.isArray(saved.recentUrls)) recentUrls.value = saved.recentUrls;
+  } catch {
+    /* 记不住最近地址不影响本次答案 */
+  }
 }
 
 function isQuestionSelected(question) {
@@ -319,6 +388,7 @@ async function loadSettings() {
   accountName.value = data.name || "";
   saveAnswers.value = data.saveAnswers !== false;
   answerFiles.value = data.files || [];
+  recentUrls.value = Array.isArray(data.recentUrls) ? data.recentUrls : [];
   if (data.expired) {
     status.value = "登录已过期。请点「切换账号」重新登录。";
   }
@@ -906,7 +976,9 @@ async function runSolve(retryFailedOnly = false) {
     );
     if (!resp) throw new Error("没有返回结果");
     papers.value = resp.papers || [];
+    await rememberPapers(papers.value);
     page.value = 1;
+    questionQuery.value = "";
     selectedQuestionN.value = null;
     selectedPartIndex.value = 0;
     if (isDocked.value) ensureDockSelection();
@@ -1090,6 +1162,19 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
             placeholder="每行一个作业页地址，粘贴后点「获取答案」。"
             @change="(value) => (url = value)"
           />
+          <div v-if="recentUrls.length" class="recent-urls">
+            <div class="field-label">最近作业</div>
+            <button
+              v-for="item in recentUrls"
+              :key="item.url"
+              type="button"
+              class="recent-url"
+              :title="item.url"
+              @click="useRecent(item)"
+            >
+              {{ item.title || item.url }}
+            </button>
+          </div>
         </div>
         <div class="account dock-url-account">
           {{ accountName ? "当前账号：" + accountName : "当前账号：未登录" }}
@@ -1122,6 +1207,19 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
             placeholder="每行粘贴一个作业做题页地址。普通作业、考试页和 AI 教学中心答题页都可以。"
             @change="(value) => (url = value)"
           />
+          <div v-if="recentUrls.length" class="recent-urls">
+            <div class="field-label">最近作业</div>
+            <button
+              v-for="item in recentUrls"
+              :key="`main-${item.url}`"
+              type="button"
+              class="recent-url"
+              :title="item.url"
+              @click="useRecent(item)"
+            >
+              {{ item.title || item.url }}
+            </button>
+          </div>
         </div>
         <div v-else class="field">
           <div class="save-hint">作业页地址在上方「作业地址」面板输入；此处为模型与获取选项。</div>
@@ -1269,7 +1367,17 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
             <span v-else-if="currentPaper.questions?.length">第 {{ page }} / {{ papers.length }} 份 · 已显示 {{ currentPaper.questions.length }} 题（未答全）</span>
             <span v-else class="paper-url">第 {{ page }} / {{ papers.length }} 份 · {{ currentPaper.url }}</span>
           </div>
-          <Button v-if="currentPaper.ok" size="small" @click="copyText(currentPaper.text)">复制本份</Button>
+          <div class="paper-actions">
+            <Button
+              v-if="currentPaper.questions?.length"
+              size="small"
+              :loading="exportingMarkdown"
+              @click="exportCurrentMarkdown"
+            >
+              导出 Markdown
+            </Button>
+            <Button v-if="currentPaper.ok" size="small" @click="copyText(currentPaper.text)">复制本份</Button>
+          </div>
         </div>
         <Banner
           v-if="currentPaper.optionNote"
@@ -1284,7 +1392,15 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
           :description="paperFailText(currentPaper)"
         />
         <p v-if="!currentPaper.ok && currentPaper.failNext" class="fail-next">下一步：{{ currentPaper.failNext }}</p>
-        <div v-if="isDocked && currentPaper.questions?.length && dockQuestions.length" class="dock-nav">
+        <div v-if="currentPaper.questions?.length" class="question-tools">
+          <Input
+            :value="questionQuery"
+            placeholder="搜索题干、选项或答案"
+            @change="(value) => (questionQuery = value)"
+          />
+          <p v-if="questionQuery.trim() && !matchedQuestions.length" class="save-hint">没有匹配的题目。</p>
+        </div>
+        <div v-if="currentPaper.questions?.length && dockQuestions.length" class="dock-nav">
           <Button size="small" :disabled="dockQuestionIndex <= 0" @click="goPrevQuestion">上一题</Button>
           <Select
             :value="dockFocusedQuestion?.n"
@@ -1447,6 +1563,12 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
           <strong>{{ hotkeyHint }}</strong>
           可把当前选中答案写入剪贴板，再到作业页粘贴。选择题复制选项字母组合，填空题复制当前空。
         </p>
+        <h2>最近作业</h2>
+        <p>成功获取过的作业地址会记在地址框下方，最多 12 条。点一条会加进地址框（已在框里的不会重复添加），方便同一门课换模型时再取一次。</p>
+        <h2>搜索题干与题号跳转</h2>
+        <p>答案区上方可以搜索题干、选项或答案，也可以用「上一题 / 下一题」和下拉题号跳转。常规窗口和贴边都可用。贴边默认仍只显示当前一题。</p>
+        <h2>导出 Markdown</h2>
+        <p>当前这份有题目时，点「导出 Markdown」会在答案文件夹里写一个 .md，含题干、选项、答案和解析（若有）。可自行存档或发给同学，提交前仍需核对。</p>
         <h2>窄栏导航（贴边做题）</h2>
         <p>
           贴在左或右侧时，答案区上方有「上一题 / 下一题」和下拉选题号，默认只显示当前一题，少在长列表里滚动。多空填空题另有「上一空 / 下一空」。需要对照多题时可点「展开全部题目」。
