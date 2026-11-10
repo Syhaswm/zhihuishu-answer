@@ -123,6 +123,30 @@ export function loadSettings() {
   return request("/api/settings");
 }
 
+export function saveModelPreset(name, provider, model, baseUrl, thinking) {
+  return request("/api/settings/preset", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, provider, model, baseUrl, thinking }),
+  });
+}
+
+export function deleteModelPreset(id) {
+  return request("/api/settings/preset/delete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id }),
+  });
+}
+
+export function setTokenLimit(wan) {
+  return request("/api/settings/token-limit", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ wan }),
+  });
+}
+
 export function rememberRecent(items) {
   return request("/api/settings/recent", {
     method: "POST",
@@ -257,7 +281,8 @@ export async function solveBatch(
   thinking,
   onProgress,
   resume = true,
-  retryFailedOnly = false
+  retryFailedOnly = false,
+  tokenLimitConfirmed = false
 ) {
   const body = JSON.stringify({
     urls,
@@ -268,6 +293,7 @@ export async function solveBatch(
     thinking,
     resume,
     retryFailedOnly,
+    tokenLimitConfirmed,
   });
   let response;
   try {

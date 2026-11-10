@@ -1,7 +1,7 @@
 [Setup]
 AppId={{8F4B1C2A-6D3E-4A91-9C77-2B5E8A1D0F44}
 AppName=智慧树答题
-AppVersion=1.9.12
+AppVersion=1.9.13
 AppPublisher=Syhaswm
 DefaultDirName=D:\智慧树答题
 DisableDirPage=no

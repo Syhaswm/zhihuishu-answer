@@ -55,6 +55,14 @@ const helpOpen = ref(false);
 const fullFetchConfirmOpen = ref(false);
 const fullFetchConfirmItems = ref([]);
 let fullFetchConfirmPending = null;
+const tokenConfirmOpen = ref(false);
+const tokenConfirmEstimate = ref(0);
+const tokenConfirmLimit = ref(0);
+let tokenConfirmPending = null;
+const modelPresets = ref([]);
+const presetName = ref("");
+const tokenLimitWan = ref(2);
+const monthUsage = ref(null);
 const updateInfo = ref(null);
 const updateCheckFailed = ref("");
 const checkingUpdate = ref(false);
@@ -112,6 +120,7 @@ const visibleFiles = computed(() =>
 const isDocked = computed(() => dockSide.value === "left" || dockSide.value === "right");
 
 const answerDisplayMode = computed(() => (answerShowReason.value ? "reason" : "answers"));
+const monthUsageText = computed(() => formatMonthUsage(monthUsage.value));
 
 const pageDisplayClasses = computed(() => ({
   "page--dock": isDocked.value,
@@ -389,6 +398,9 @@ async function loadSettings() {
   saveAnswers.value = data.saveAnswers !== false;
   answerFiles.value = data.files || [];
   recentUrls.value = Array.isArray(data.recentUrls) ? data.recentUrls : [];
+  modelPresets.value = Array.isArray(data.modelPresets) ? data.modelPresets : [];
+  tokenLimitWan.value = Number.isFinite(Number(data.tokenLimitWan)) ? Number(data.tokenLimitWan) : 2;
+  monthUsage.value = data.monthUsage || null;
   if (data.expired) {
     status.value = "登录已过期。请点「切换账号」重新登录。";
   }
@@ -546,6 +558,63 @@ async function login() {
     }
   } finally {
     loggingIn.value = false;
+  }
+}
+
+function applyPreset(item) {
+  if (!item) return;
+  chooseProvider(item.provider);
+  modelName.value = item.model || modelName.value;
+  if (item.baseUrl) baseUrl.value = item.baseUrl;
+  thinking.value = !!item.thinking && modelSupportsThinking(item.provider, item.model);
+  Toast.success(`已切换到「${item.name}」`);
+}
+
+async function saveCurrentPreset() {
+  const name = String(presetName.value || "").trim();
+  if (!name) {
+    Toast.warning("请先填写预设名称。");
+    return;
+  }
+  try {
+    const data = await api.saveModelPreset(
+      name,
+      provider.value,
+      modelName.value,
+      baseUrl.value,
+      thinking.value && supportsThinking.value
+    );
+    if (!data.ok) throw new Error(data.error || "保存预设失败");
+    modelPresets.value = data.modelPresets || modelPresets.value;
+    presetName.value = "";
+    Toast.success(`已保存预设「${name}」`);
+  } catch (err) {
+    Toast.warning(err.message || "保存预设失败");
+  }
+}
+
+async function removePreset(item) {
+  if (!item || item.builtin) return;
+  try {
+    const data = await api.deleteModelPreset(item.id);
+    if (!data.ok) throw new Error(data.error || "删除预设失败");
+    modelPresets.value = data.modelPresets || [];
+  } catch (err) {
+    Toast.warning(err.message || "删除预设失败");
+  }
+}
+
+async function changeTokenLimit(value) {
+  const number = Number(String(value ?? "").trim());
+  const next = Number.isFinite(number) ? Math.min(100, Math.max(0, number)) : 0;
+  tokenLimitWan.value = next;
+  try {
+    const data = await api.setTokenLimit(next);
+    if (data && Number.isFinite(Number(data.tokenLimitWan))) {
+      tokenLimitWan.value = Number(data.tokenLimitWan);
+    }
+  } catch (err) {
+    Toast.warning(err.message || "上限保存失败");
   }
 }
 
@@ -845,6 +914,16 @@ async function removeAll() {
   Toast.success("已删除答案文件夹");
 }
 
+function formatMonthUsage(usage) {
+  if (!usage) return "";
+  const total = Number(usage.total_tokens) || 0;
+  const requests = Number(usage.requests) || 0;
+  if (!total && !requests) return `${usage.month || "本月"} 本机还没有累计用量。`;
+  const prompt = Number(usage.prompt_tokens) || 0;
+  const completion = Number(usage.completion_tokens) || 0;
+  return `本机 ${usage.month || ""} 累计：输入 ${prompt} · 输出 ${completion} · 合计 ${total} tokens，${requests} 次请求`;
+}
+
 function paperTitle(paper) {
   if (!paper.ok) return paper.title || "这份作业没有取到";
   return paper.course ? `${paper.course} · ${paper.title}` : paper.title || "作业";
@@ -905,6 +984,27 @@ async function clearCheckpoint() {
   }
 }
 
+function resolveTokenConfirm(ok) {
+  tokenConfirmOpen.value = false;
+  const done = tokenConfirmPending;
+  tokenConfirmPending = null;
+  if (done) done(!!ok);
+}
+
+function askTokenConfirm(info) {
+  tokenConfirmEstimate.value = Number(info?.tokenEstimate) || 0;
+  tokenConfirmLimit.value = Number(info?.tokenLimit) || 0;
+  return new Promise((resolve) => {
+    tokenConfirmOpen.value = true;
+    tokenConfirmPending = resolve;
+  });
+}
+
+function formatWan(tokens) {
+  const wan = (Number(tokens) || 0) / 10000;
+  return wan >= 10 ? wan.toFixed(1) : wan.toFixed(2);
+}
+
 function resolveFullFetchConfirm(ok) {
   fullFetchConfirmOpen.value = false;
   const done = fullFetchConfirmPending;
@@ -960,21 +1060,39 @@ async function runSolve(retryFailedOnly = false) {
   }
   loading.value = true;
   status.value = retryFailedOnly ? "正在仅重试未答全的作业…" : "正在同时获取每一份作业…";
+  let tokenLimitConfirmed = false;
   try {
-    const resp = await api.solveBatch(
-      url.value,
-      apiKey.value,
-      provider.value,
-      modelName.value,
-      baseUrl.value,
-      thinking.value && supportsThinking.value,
-      (message) => {
-        status.value = message;
-      },
-      resumeCheckpoint.value,
-      retryFailedOnly
-    );
-    if (!resp) throw new Error("没有返回结果");
+    let resp = null;
+    for (let pass = 0; pass < 2; pass += 1) {
+      resp = await api.solveBatch(
+        url.value,
+        apiKey.value,
+        provider.value,
+        modelName.value,
+        baseUrl.value,
+        thinking.value && supportsThinking.value,
+        (message) => {
+          status.value = message;
+        },
+        resumeCheckpoint.value,
+        retryFailedOnly,
+        tokenLimitConfirmed
+      );
+      if (!resp) throw new Error("没有返回结果");
+      if (resp.needTokenConfirm && !tokenLimitConfirmed) {
+        loading.value = false;
+        const ok = await askTokenConfirm(resp);
+        if (!ok) {
+          status.value = "已取消本次获取。预估用量超过上限，没有请求模型。";
+          return;
+        }
+        tokenLimitConfirmed = true;
+        loading.value = true;
+        status.value = "已确认继续，正在获取答案…";
+        continue;
+      }
+      break;
+    }
     papers.value = resp.papers || [];
     await rememberPapers(papers.value);
     page.value = 1;
@@ -983,6 +1101,7 @@ async function runSolve(retryFailedOnly = false) {
     selectedPartIndex.value = 0;
     if (isDocked.value) ensureDockSelection();
     sessionUsageText.value = resp.usageText || "";
+    if (resp.monthUsage) monthUsage.value = resp.monthUsage;
     sessionCacheText.value = resp.cacheHint || "";
     status.value = resp.summary || "";
     if (resp.cacheHint && !resp.changedQuestions && resp.reusedQuestions) {
@@ -1254,6 +1373,28 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
             style="width: 100%; margin-top: 8px"
             @change="(value) => (modelName = value)"
           />
+          <div class="preset-box">
+            <div class="field-label">模型预设</div>
+            <div class="preset-row">
+              <span v-for="item in modelPresets" :key="item.id" class="preset-item">
+                <Button size="small" @click="applyPreset(item)">{{ item.name }}</Button>
+                <button
+                  v-if="!item.builtin"
+                  type="button"
+                  class="preset-remove"
+                  title="删除预设"
+                  @click="removePreset(item)"
+                >
+                  ×
+                </button>
+              </span>
+            </div>
+            <div class="model-row">
+              <Input :value="presetName" placeholder="预设名称，如 通义日常" @change="(value) => (presetName = value)" />
+              <Button @click="saveCurrentPreset">保存当前</Button>
+            </div>
+            <div class="save-hint">「日常 flash」关闭思考；「难题 thinking」仍用 DeepSeek flash，但打开思考。自定义预设会记住当前厂商、模型和思考开关。</div>
+          </div>
         </div>
         <div class="field">
           <div class="field-label">{{ currentProvider?.needsKey ? "API Key" : "API Key（本地模型可以不填）" }}</div>
@@ -1283,6 +1424,7 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
             <div v-if="usageNote" class="model-hint" :class="{ 'is-ok': usageSupported && usageRows.length }">
               {{ usageNote }}
             </div>
+            <div v-if="monthUsageText" class="model-hint">{{ monthUsageText }}。可与上面的账户余额对照，这是本软件自己记下的调用量。</div>
           </div>
         </div>
         <div class="save-row checkpoint-row">
@@ -1294,6 +1436,11 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
             </div>
           </div>
           <Switch :checked="resumeCheckpoint" @change="(value) => (resumeCheckpoint = isChecked(value))" />
+        </div>
+        <div class="field">
+          <div class="field-label">单次 token 上限（万）</div>
+          <Input :value="String(tokenLimitWan)" placeholder="2" @change="changeTokenLimit" />
+          <div class="save-hint">按待请求题目预估。超过上限会先弹窗，确认后才调用模型。填 0 表示不限制。</div>
         </div>
         <div v-if="!isDocked" class="account">{{ accountName ? "当前账号：" + accountName : "当前账号：未登录" }}</div>
         <div v-if="!isDocked" class="actions">
@@ -1313,6 +1460,7 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
         <div v-if="!isDocked" class="status">{{ status }}</div>
         <div v-if="sessionCacheText" class="cache-session">{{ sessionCacheText }}</div>
         <div v-if="sessionUsageText" class="usage-session">{{ sessionUsageText }}</div>
+        <div v-if="monthUsageText" class="usage-session">{{ monthUsageText }}</div>
       </Card>
 
       <Card v-show="!isDocked || showDockSettings" class="form-card" :bodyStyle="{ padding: '18px 18px 14px' }">
@@ -1520,6 +1668,23 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
         <Button theme="solid" type="primary" @click="resolveFullFetchConfirm(true)">仍要获取</Button>
       </div>
     </Modal>
+    <Modal
+      :visible="tokenConfirmOpen"
+      title="确认本次用量"
+      :width="480"
+      :footer="null"
+      @cancel="resolveTokenConfirm(false)"
+    >
+      <p class="confirm-lead">
+        这次待请求的题目预估约 {{ formatWan(tokenConfirmEstimate) }} 万 tokens，超过设定上限
+        {{ formatWan(tokenConfirmLimit) }} 万。确认后才会调用模型。
+      </p>
+      <p class="confirm-tip">预估含输入和单次输出上限，实际消耗通常更低。可把上限改成 0 关闭确认。</p>
+      <div class="confirm-actions">
+        <Button @click="resolveTokenConfirm(false)">取消</Button>
+        <Button theme="solid" type="primary" @click="resolveTokenConfirm(true)">继续获取</Button>
+      </div>
+    </Modal>
 
     <Modal :visible="helpOpen" title="帮助" :width="640" :footer="null" @cancel="helpOpen = false">
       <div class="help">
@@ -1540,7 +1705,9 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
         <h2>换成其他模型</h2>
         <p>模型可以换成通义千问、智谱、Kimi、豆包、OpenAI、Gemini，也可以用本机的 Ollama 或 LM Studio。这些接口都按同一种对话格式调用。本地模型要先在自己电脑上启动。没有列出的服务，选「自定义接口」，填它的地址和模型名。</p>
         <h2>查询用量</h2>
-        <p>填好 API Key 后点「查询用量」，会按当前选的厂商查询余额或套餐额度（和 CC Switch 一样，界面统一、各家接口不同）。DeepSeek、通义、智谱、Kimi 等支持 API 查询；OpenAI、Gemini、豆包等若官方不提供 Key 余额接口，会提示到控制台查看。本地 Ollama / LM Studio 只显示本机状态。</p>
+        <p>填好 API Key 后点「查询用量」，会按当前选的厂商查询余额或套餐额度。DeepSeek、通义、智谱、Kimi 支持余额查询。OpenAI 若是组织管理员 Key，会额外显示本月费用和用量，普通 Key 仍请到控制台查看。豆包会检查 Key 能否列出模型，账户余额仍在火山引擎控制台。本地 Ollama / LM Studio 只显示本机状态。查询结果下方会附上本软件记下的本月累计，方便和账户余额对照。</p>
+        <h2>模型预设与单次上限</h2>
+        <p>「日常 flash」一键切到 DeepSeek flash 并关闭思考；「难题 thinking」仍用 flash，但打开思考。也可以把当前厂商和模型存成自己的预设。单次 token 上限默认 2 万，预估超过时先确认再请求模型，填 0 则不限制。</p>
         <h2>怎么使用</h2>
         <ol>
           <li>点「登录账号」，在弹出的窗口登录正在做这份作业的智慧树账号。登录会保存，界面上能看到当前账号。要换人时再点「切换账号」。</li>

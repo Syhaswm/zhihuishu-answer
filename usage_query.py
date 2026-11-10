@@ -230,24 +230,103 @@ def _usage_kimi(found, base_url, api_key):
     raise last_error or RuntimeError("Kimi 余额查询失败，请确认 Key 与平台（.cn / .ai）一致。")
 
 
+def _month_start_unix():
+    import calendar
+    import time
+
+    now = time.gmtime()
+    return int(calendar.timegm((now.tm_year, now.tm_mon, 1, 0, 0, 0, 0, 0, 0)))
+
+
+def sum_openai_cost(payload):
+    total = 0.0
+    found = False
+    if not isinstance(payload, dict):
+        return found, total
+    for bucket in payload.get("data") or []:
+        if not isinstance(bucket, dict):
+            continue
+        for result in bucket.get("results") or []:
+            if not isinstance(result, dict):
+                continue
+            amount = result.get("amount") if isinstance(result.get("amount"), dict) else {}
+            value = amount.get("value")
+            if value is None:
+                continue
+            total += float(value)
+            found = True
+    return found, total
+
+
+def sum_openai_completion_usage(payload):
+    prompt = 0
+    completion = 0
+    found = False
+    if not isinstance(payload, dict):
+        return found, prompt, completion
+    for bucket in payload.get("data") or []:
+        if not isinstance(bucket, dict):
+            continue
+        for result in bucket.get("results") or []:
+            if not isinstance(result, dict):
+                continue
+            if result.get("input_tokens") is None and result.get("output_tokens") is None:
+                continue
+            prompt += int(result.get("input_tokens") or 0)
+            completion += int(result.get("output_tokens") or 0)
+            found = True
+    return found, prompt, completion
+
+
 def _usage_openai(found, _base_url, api_key):
+    rows = []
+    notes = []
     try:
         data = _get_json("https://api.openai.com/v1/dashboard/billing/credit_grants", api_key)
         total = data.get("total_available") or data.get("total_granted")
         used = data.get("total_used")
-        rows = _rows(
-            _row("可用赠金", f"${total}" if total is not None else ""),
-            _row("已使用", f"${used}" if used is not None else ""),
+        rows.extend(
+            _rows(
+                _row("可用赠金", f"${total}" if total is not None else ""),
+                _row("已使用", f"${used}" if used is not None else ""),
+            )
         )
-        if rows:
-            return _result(found, True, rows, "部分账号此接口已停用，以控制台为准。")
     except RuntimeError:
-        pass
+        notes.append("赠金接口不可用")
+
+    start = _month_start_unix()
+    try:
+        costs = _get_json(
+            "https://api.openai.com/v1/organization/costs"
+            f"?start_time={start}&bucket_width=1d&limit=31",
+            api_key,
+        )
+        found_cost, amount = sum_openai_cost(costs)
+        if found_cost:
+            rows.append(_row("本月费用", f"${amount:.4f}"))
+    except RuntimeError as exc:
+        notes.append(f"组织账单：{exc}")
+    try:
+        usage = _get_json(
+            "https://api.openai.com/v1/organization/usage/completions"
+            f"?start_time={start}&bucket_width=1d&limit=31",
+            api_key,
+        )
+        found_usage, prompt, completion = sum_openai_completion_usage(usage)
+        if found_usage:
+            rows.append(_row("本月输入", f"{prompt} tokens"))
+            rows.append(_row("本月输出", f"{completion} tokens"))
+    except RuntimeError as exc:
+        notes.append(f"组织用量：{exc}")
+
+    if rows:
+        note = "普通 Key 往往看不到组织账单；能看到的数字以控制台为准。"
+        return _result(found, True, rows, note)
     return _result(
         found,
         False,
         [],
-        "OpenAI 未提供稳定的 API Key 余额接口，请到控制台查看账单与剩余额度。",
+        "OpenAI 普通 API Key 不能查余额。组织管理员 Key 才能看本月费用和用量，其余请到控制台查看。",
     )
 
 
@@ -274,13 +353,22 @@ def _usage_gemini(found, _base_url, api_key):
     )
 
 
-def _usage_doubao(found, _base_url, _api_key):
-    return _result(
-        found,
-        False,
-        [],
-        "豆包（火山方舟）余额与免费额度需在火山引擎控制台查看，API Key 暂无统一余额接口。",
-    )
+def _usage_doubao(found, base_url, api_key):
+    endpoint = provider_endpoint(found, base_url)
+    root = str(endpoint or found["url"]).strip().rstrip("/")
+    if root.endswith("/chat/completions"):
+        root = root[: -len("/chat/completions")]
+    rows = []
+    note = "火山方舟的推理 Key 不能查账户余额，费用请到火山引擎控制台查看。"
+    try:
+        payload = _get_json(root + "/models", api_key)
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if isinstance(data, list):
+            rows.append(_row("账号可见模型数", str(len(data))))
+            note = "Key 可用。火山方舟不提供余额接口，费用请到火山引擎控制台查看。"
+    except RuntimeError as exc:
+        note = f"Key 或接入地址未能列出模型：{exc}。余额请到火山引擎控制台查看。"
+    return _result(found, False, rows, note)
 
 
 def _usage_ollama(found, base_url, _api_key):

@@ -724,6 +724,32 @@ body {
   margin: 0 2px 10px;
 }
 
+.preset-box {
+  margin-top: 10px;
+}
+
+.preset-row,
+.preset-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.preset-row {
+  margin: 6px 0;
+}
+
+.preset-remove {
+  border: none;
+  background: transparent;
+  color: var(--semi-color-text-2, #6b7075);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
 .paper-copy {
   min-width: 0;
 }

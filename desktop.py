@@ -162,6 +162,7 @@ class Api:
         self._batch_label = ""
         self._progress_lock = threading.Lock()
         self._on_progress = None
+        self._exam_cache = {}
 
     def load_settings(self):
         try:
@@ -211,9 +212,61 @@ class Api:
             "answerShowReason": bool(pref.get("answerShowReason", False)),
             "answerFontSize": font_size,
             "recentUrls": self._recent_urls(pref),
+            "modelPresets": self._all_presets(pref),
+            "tokenLimitWan": self._token_limit_wan(pref),
+            "monthUsage": self._month_usage_view(pref),
             "providers": answer.PROVIDERS,
             "files": self._answer_files(),
         }
+
+    def save_model_preset(self, name, provider, model, base_url, thinking=False):
+        title = re.sub(r"\s+", " ", str(name or "").strip())[:20]
+        if not title:
+            raise RuntimeError("请填写预设名称。")
+        try:
+            provider_info, endpoint, model_name = answer.resolve_provider(provider, model, base_url)
+        except Exception as exc:
+            raise RuntimeError(str(exc)) from exc
+        data = self._read_pref()
+        presets = [item for item in self._custom_presets(data) if item["name"] != title]
+        presets.insert(
+            0,
+            {
+                "id": f"custom-{int(time.time())}",
+                "name": title,
+                "provider": provider_info["id"],
+                "model": model_name,
+                "baseUrl": endpoint,
+                "thinking": bool(thinking),
+                "builtin": False,
+            },
+        )
+        data["modelPresets"] = presets[:6]
+        self._pref_path().write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        return {"ok": True, "modelPresets": self._all_presets(data)}
+
+    def delete_model_preset(self, preset_id):
+        target = str(preset_id or "").strip()
+        if not target.startswith("custom-"):
+            raise RuntimeError("内置预设不能删除。")
+        data = self._read_pref()
+        data["modelPresets"] = [item for item in self._custom_presets(data) if item["id"] != target]
+        self._pref_path().write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        return {"ok": True, "modelPresets": self._all_presets(data)}
+
+    def set_token_limit(self, wan):
+        data = self._read_pref()
+        try:
+            value = float(wan)
+        except (TypeError, ValueError):
+            value = 0
+        if value < 0:
+            value = 0
+        if value > 100:
+            value = 100
+        data["tokenLimitWan"] = round(value, 1)
+        self._pref_path().write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        return {"ok": True, "tokenLimitWan": data["tokenLimitWan"]}
 
     def remember_recent_urls(self, items):
         data = self._read_pref()
@@ -392,6 +445,133 @@ class Api:
         head = re.sub(r'[<>:"/\\|?*\r\n]', " ", head)
         head = re.sub(r"\s+", " ", head).strip(" .")[:50] or "作业"
         return f"{head}.md"
+
+    def _builtin_presets(self):
+        deepseek = answer.find_provider("deepseek")
+        return [
+            {
+                "id": "daily-flash",
+                "name": "日常 flash",
+                "provider": "deepseek",
+                "model": deepseek["model"],
+                "baseUrl": deepseek["url"],
+                "thinking": False,
+                "builtin": True,
+            },
+            {
+                "id": "hard-thinking",
+                "name": "难题 thinking",
+                "provider": "deepseek",
+                "model": deepseek["model"],
+                "baseUrl": deepseek["url"],
+                "thinking": True,
+                "builtin": True,
+            },
+        ]
+
+    def _custom_presets(self, pref):
+        raw = pref.get("modelPresets") if isinstance(pref, dict) else None
+        if not isinstance(raw, list):
+            return []
+        found = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            name = re.sub(r"\s+", " ", str(item.get("name") or "").strip())[:20]
+            provider = str(item.get("provider") or "").strip()
+            model = str(item.get("model") or "").strip()
+            if not name or not provider or not model:
+                continue
+            found.append(
+                {
+                    "id": str(item.get("id") or f"custom-{len(found)}"),
+                    "name": name,
+                    "provider": provider,
+                    "model": model,
+                    "baseUrl": str(item.get("baseUrl") or ""),
+                    "thinking": bool(item.get("thinking")),
+                    "builtin": False,
+                }
+            )
+            if len(found) >= 6:
+                break
+        return found
+
+    def _all_presets(self, pref):
+        return self._builtin_presets() + self._custom_presets(pref)
+
+    @staticmethod
+    def _token_limit_wan(pref):
+        if not isinstance(pref, dict) or "tokenLimitWan" not in pref:
+            return 2
+        try:
+            value = float(pref.get("tokenLimitWan"))
+        except (TypeError, ValueError):
+            return 2
+        if value < 0:
+            return 0
+        return round(min(value, 100), 1)
+
+    def _token_limit_tokens(self):
+        wan = self._token_limit_wan(self._read_pref())
+        return int(wan * 10000)
+
+    def _month_usage_view(self, pref):
+        book = pref.get("monthUsage") if isinstance(pref, dict) else None
+        if not isinstance(book, dict):
+            book = {}
+        month = time.strftime("%Y-%m")
+        row = book.get(month) if isinstance(book.get(month), dict) else {}
+        return {
+            "month": month,
+            "prompt_tokens": int(row.get("prompt_tokens") or 0),
+            "completion_tokens": int(row.get("completion_tokens") or 0),
+            "total_tokens": int(row.get("total_tokens") or 0),
+            "requests": int(row.get("requests") or 0),
+        }
+
+    def _add_month_usage(self, usage, provider_id):
+        usage = usage if isinstance(usage, dict) else {}
+        if int(usage.get("requests") or 0) <= 0 and int(usage.get("total_tokens") or 0) <= 0:
+            return self._month_usage_view(self._read_pref())
+        data = self._read_pref()
+        book = data.get("monthUsage") if isinstance(data.get("monthUsage"), dict) else {}
+        month = time.strftime("%Y-%m")
+        row = book.get(month) if isinstance(book.get(month), dict) else {}
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens", "requests"):
+            row[key] = int(row.get(key) or 0) + int(usage.get(key) or 0)
+        by_provider = row.get("byProvider") if isinstance(row.get("byProvider"), dict) else {}
+        provider_row = by_provider.get(provider_id) if isinstance(by_provider.get(provider_id), dict) else {}
+        provider_row["total_tokens"] = int(provider_row.get("total_tokens") or 0) + int(usage.get("total_tokens") or 0)
+        provider_row["requests"] = int(provider_row.get("requests") or 0) + int(usage.get("requests") or 0)
+        by_provider[str(provider_id or "")] = provider_row
+        row["byProvider"] = by_provider
+        book[month] = row
+        months = sorted(book)[-6:]
+        data["monthUsage"] = {key: book[key] for key in months}
+        self._pref_path().write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        return self._month_usage_view(data)
+
+    def _cached_exam(self, url):
+        item = self._exam_cache.get(str(url or ""))
+        if not item:
+            return None
+        saved_at, exam = item
+        if time.time() - saved_at > 600 or not exam:
+            self._exam_cache.pop(str(url or ""), None)
+            return None
+        return exam
+
+    def _stash_exams(self, urls, fetched):
+        now = time.time()
+        self._exam_cache = {
+            key: value
+            for key, value in self._exam_cache.items()
+            if now - value[0] <= 600
+        }
+        for url, exam in zip(urls, fetched):
+            if exam:
+                self._exam_cache[str(url)] = (now, exam)
 
     def _answer_dir(self):
         return answer.ROOT / "答案"
@@ -873,16 +1053,25 @@ class Api:
         text = str(exc or "")
         return any(word in text for word in ("参数", "不属于", "登录", "失效"))
 
-    def _fetch_all(self, urls, cookie):
+    def _fetch_all(self, urls, cookie, use_cache=False):
         if not urls:
             return [], []
         fetched = [None] * len(urls)
         errors = [None] * len(urls)
-        workers = min(answer.PARALLEL, len(urls))
+        pending = []
+        for index, url in enumerate(urls):
+            cached = self._cached_exam(url) if use_cache else None
+            if cached is not None:
+                fetched[index] = cached
+            else:
+                pending.append(index)
+        if not pending:
+            return fetched, errors
+        workers = min(answer.PARALLEL, len(pending))
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {
-                pool.submit(answer.fetch_homework, url, cookie): index
-                for index, url in enumerate(urls)
+                pool.submit(answer.fetch_homework, urls[index], cookie): index
+                for index in pending
             }
             for future in as_completed(futures):
                 index = futures[future]
@@ -951,6 +1140,7 @@ class Api:
         thinking=False,
         resume=True,
         retry_failed_only=False,
+        token_limit_confirmed=False,
     ):
         urls = answer.split_homework_urls(text)
         if not urls:
@@ -997,7 +1187,7 @@ class Api:
             if answer.is_polymas_url(url):
                 cookie = self._sync_polymas(url, cookie)
         self._progress(f"正在同时拉取 {total} 份题目…")
-        fetched, errors = self._fetch_all(urls, cookie)
+        fetched, errors = self._fetch_all(urls, cookie, use_cache=bool(token_limit_confirmed))
         if any(self._should_retry(errors[i]) for i in range(total)):
             cookie = self._harvest(cookie)
             retry_urls = [(i, urls[i]) for i in range(total) if self._should_retry(errors[i])]
@@ -1060,6 +1250,20 @@ class Api:
                 note += f"（含 {retried_chunks} 组上次失败）"
             self._progress(note + "…")
         if jobs:
+            limit_tokens = self._token_limit_tokens()
+            thinking_on = bool(thinking) and answer.supports_thinking(provider_info["id"], model_name)
+            estimate = answer.estimate_jobs_tokens(jobs, thinking_on)
+            if limit_tokens and estimate > limit_tokens and not token_limit_confirmed:
+                self._stash_exams(urls, fetched)
+                return {
+                    "ok": False,
+                    "needTokenConfirm": True,
+                    "tokenEstimate": estimate,
+                    "tokenLimit": limit_tokens,
+                    "chunkCount": len(jobs),
+                    "papers": [],
+                    "summary": "",
+                }
             self._progress(f"正在同时解答 {len(jobs)} 组题目…")
             done = 0
             pin = answer.pinned_deepseek() if "api.deepseek.com" in endpoint else nullcontext()
@@ -1187,6 +1391,7 @@ class Api:
         else:
             summary = resume_note + f"完成 {done} 份。每份答案单独保存在「答案」文件夹。"
         usage_text = answer.format_session_usage(session_usage)
+        month_usage = self._add_month_usage(session_usage, provider_info["id"])
         self._progress(summary if not usage_text else f"{summary}\n{usage_text}")
         payload = {
             "ok": done > 0 or partial > 0,
@@ -1195,6 +1400,7 @@ class Api:
             "summary": summary,
             "usage": session_usage,
             "usageText": usage_text,
+            "monthUsage": month_usage,
             "skippedChunks": skipped_chunks,
             "resume": bool(resume),
             "retryFailedOnly": bool(retry_failed_only),

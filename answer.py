@@ -1544,6 +1544,17 @@ def question_chunks(questions, size=CHUNK):
         yield questions[start : start + size]
 
 
+def estimate_jobs_tokens(jobs, thinking=False):
+    """Upper-bound token estimate for chunks that will actually call the model."""
+    total = 0
+    output_each = 5000 if thinking else 2500
+    for chunk in jobs or []:
+        questions = chunk[1] if isinstance(chunk, tuple) and len(chunk) == 2 else chunk
+        prompt = build_prompt(list(questions or []))
+        total += max(1, len(prompt) // 2) + 120 + output_each
+    return total
+
+
 def apply_answers(exam, found):
     for question in exam["questions"]:
         item = found.get(question["n"])

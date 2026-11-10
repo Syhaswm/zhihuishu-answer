@@ -115,6 +115,7 @@ class SolveIn(BaseModel):
     thinking: bool = False
     resume: bool = True
     retryFailedOnly: bool = False
+    tokenLimitConfirmed: bool = False
 
 
 class CheckpointClearIn(BaseModel):
@@ -137,6 +138,22 @@ class FullFetchConfirmIn(BaseModel):
     thinking: bool = False
     resume: bool = True
     retryFailedOnly: bool = False
+
+
+class PresetIn(BaseModel):
+    name: str = ""
+    provider: str = "deepseek"
+    model: str = ""
+    baseUrl: str = ""
+    thinking: bool = False
+
+
+class PresetDeleteIn(BaseModel):
+    id: str = ""
+
+
+class TokenLimitIn(BaseModel):
+    wan: float = 0
 
 
 class RecentItem(BaseModel):
@@ -228,6 +245,27 @@ def set_display(body: DisplayIn):
 @app.post("/api/settings/recent")
 def remember_recent(body: RecentIn):
     return api.remember_recent_urls([item.model_dump() for item in body.items])
+
+
+@app.post("/api/settings/preset")
+def save_preset(body: PresetIn):
+    try:
+        return api.save_model_preset(body.name, body.provider, body.model, body.baseUrl, body.thinking)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@app.post("/api/settings/preset/delete")
+def delete_preset(body: PresetDeleteIn):
+    try:
+        return api.delete_model_preset(body.id)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@app.post("/api/settings/token-limit")
+def set_token_limit(body: TokenLimitIn):
+    return api.set_token_limit(body.wan)
 
 
 @app.post("/api/answers/markdown")
@@ -500,6 +538,7 @@ def solve(body: SolveIn):
                 body.thinking,
                 body.resume,
                 body.retryFailedOnly,
+                body.tokenLimitConfirmed,
             )
         except Exception as exc:
             result = {"ok": False, "error": str(exc), "papers": [], "summary": str(exc)}
