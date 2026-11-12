@@ -3,7 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { BackTop, Banner, Button, Card, Checkbox, Input, Modal, Pagination, Select, Switch, Tag, TextArea, Toast } from "@kousum/semi-ui-vue";
 import * as api from "./api";
 import { applyAlwaysOnTop, applyDockLayout, applyWindowOpacity, DOCK_WIDTH_DEFAULT, runningInTauri } from "./dock";
-import { registerCopyHotkey, unregisterCopyHotkey, writeClipboard } from "./hotkey";
+import { registerAnswerHotkeys, unregisterAnswerHotkeys, writeClipboard } from "./hotkey";
 
 const url = ref("");
 const apiKey = ref("");
@@ -71,6 +71,7 @@ const appVersionText = ref("");
 const selectedQuestionN = ref(null);
 const selectedPartIndex = ref(0);
 const hotkeyHint = "Ctrl+Shift+C";
+const hotkeyNavHint = "Ctrl+Shift+↑/↓ 换题，←/→ 换空";
 const keyPage = "https://platform.deepseek.com/api_keys";
 const dockSide = ref("off");
 const dockWidth = ref(DOCK_WIDTH_DEFAULT);
@@ -239,8 +240,8 @@ function goNextPart() {
   selectedPartIndex.value += 1;
 }
 
-watch([isDocked, dockQuestions], () => {
-  if (isDocked.value) ensureDockSelection();
+watch(dockQuestions, () => {
+  ensureDockSelection();
 });
 
 watch(questionQuery, () => {
@@ -258,7 +259,7 @@ function showPage(next) {
   questionQuery.value = "";
   selectedQuestionN.value = null;
   selectedPartIndex.value = 0;
-  if (isDocked.value) ensureDockSelection();
+  ensureDockSelection();
   paperAnchor.value?.scrollIntoView({ block: "start" });
 }
 
@@ -347,7 +348,7 @@ async function copyHotkeyAnswer() {
   }
   const text = String(payload.text || "").trim();
   if (!text) {
-    Toast.warning("当前选中没有答案，请点选另一题或某一空。");
+    Toast.warning("当前选中没有答案，请换一题或换一空。");
     return;
   }
   const ok = await writeClipboard(text);
@@ -810,7 +811,13 @@ function retryUpdateCheck() {
 
 onMounted(async () => {
   tauriChrome.value = await runningInTauri();
-  registerCopyHotkey(() => copyHotkeyAnswer()).catch(() => {});
+  registerAnswerHotkeys({
+    copy: () => copyHotkeyAnswer(),
+    prevQuestion: () => goPrevQuestion(),
+    nextQuestion: () => goNextQuestion(),
+    prevPart: () => goPrevPart(),
+    nextPart: () => goNextPart(),
+  }).catch(() => {});
   refreshCheckpointPending();
   try {
     appVersionText.value = (await api.appVersion()) || "";
@@ -824,7 +831,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
-  unregisterCopyHotkey().catch(() => {});
+  unregisterAnswerHotkeys().catch(() => {});
 });
 
 function displayParts(question) {
@@ -1099,7 +1106,7 @@ async function runSolve(retryFailedOnly = false) {
     questionQuery.value = "";
     selectedQuestionN.value = null;
     selectedPartIndex.value = 0;
-    if (isDocked.value) ensureDockSelection();
+    ensureDockSelection();
     sessionUsageText.value = resp.usageText || "";
     if (resp.monthUsage) monthUsage.value = resp.monthUsage;
     sessionCacheText.value = resp.cacheHint || "";
@@ -1174,7 +1181,7 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
             <span v-if="appVersionText" class="app-version">v{{ appVersionText }}</span>
           </div>
           <p v-if="!isDocked">多份作业一次只显示一份，用分页切换。是否保存答案文件可以自己选。</p>
-          <p v-else class="dock-tagline">贴边模式：用窄栏上一题/下一题或题号跳转对照答案；{{ hotkeyHint }} 复制当前空。</p>
+          <p v-else class="dock-tagline">贴边模式：{{ hotkeyNavHint }}；{{ hotkeyHint }} 复制当前答案。浏览器可保持焦点。</p>
         </div>
         <div class="brand-actions">
           <Button v-if="isDocked" size="small" @click="showDockUrlPanel = !showDockUrlPanel">
@@ -1215,8 +1222,8 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
             @change="changeDockSide"
           />
           <div class="save-hint">
-            贴在左或右侧并可选置顶，方便浏览器做题时对照答案。在软件里点一下题目或某一空，按
-            {{ hotkeyHint }} 可复制到剪贴板，浏览器可保持焦点。
+            贴在左或右侧并可选置顶，方便浏览器做题时对照答案。获取答案后第一题已选中，用
+            {{ hotkeyNavHint }}，{{ hotkeyHint }} 复制。不必再点软件窗口。
           </div>
         </div>
         <div v-if="isDocked" class="save-row dock-top-row">
@@ -1620,7 +1627,7 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
                 {{ part.text || "（无）" }}
               </span>
               <Button
-                v-if="!question.options.length"
+                v-if="!question.options.length && !isDocked"
                 size="small"
                 theme="solid"
                 type="primary"
@@ -1724,11 +1731,12 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
         <p>
           发现新版本后点「立即更新」：软件在后台下载安装包，并静默覆盖安装到当前软件所在目录，不打开浏览器、不弹出安装向导、不用选择路径。装完后程序会自动关闭并重新打开。
         </p>
-        <h2>快捷键复制（贴边做题）</h2>
+        <h2>快捷键（少切出浏览器）</h2>
         <p>
-          获取答案后，在题目区域点一下某道题或某一空（会高亮）。焦点留在浏览器时，按
+          获取答案后第一题会自动选中。焦点留在浏览器时：
+          <strong>{{ hotkeyNavHint }}</strong>，
           <strong>{{ hotkeyHint }}</strong>
-          可把当前选中答案写入剪贴板，再到作业页粘贴。选择题复制选项字母组合，填空题复制当前空。
+          复制当前答案。选择题复制选项原文，填空题复制当前空。贴边时不再显示每空的「复制」按钮，避免点一下就把焦点从浏览器带走。这些快捷键只是少点答题窗口，不能阻止作业页自己记录切屏。
         </p>
         <h2>最近作业</h2>
         <p>成功获取过的作业地址会记在地址框下方，最多 12 条。点一条会加进地址框（已在框里的不会重复添加），方便同一门课换模型时再取一次。</p>
@@ -1738,7 +1746,7 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
         <p>当前这份有题目时，点「导出 Markdown」会在答案文件夹里写一个 .md，含题干、选项、答案和解析（若有）。可自行存档或发给同学，提交前仍需核对。</p>
         <h2>窄栏导航（贴边做题）</h2>
         <p>
-          贴在左或右侧时，答案区上方有「上一题 / 下一题」和下拉选题号，默认只显示当前一题，少在长列表里滚动。多空填空题另有「上一空 / 下一空」。需要对照多题时可点「展开全部题目」。
+          贴在左或右侧时，答案区上方有「上一题 / 下一题」和下拉选题号，也可用 {{ hotkeyNavHint }}。默认只显示当前一题。需要对照多题时可点「展开全部题目」。
         </p>
         <h2>答案显示与字号</h2>
         <p>
