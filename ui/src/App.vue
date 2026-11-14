@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { BackTop, Banner, Button, Card, Checkbox, Input, Modal, Pagination, Select, Switch, Tag, TextArea, Toast } from "@kousum/semi-ui-vue";
 import * as api from "./api";
-import { applyAlwaysOnTop, applyDockLayout, applyWindowOpacity, DOCK_WIDTH_DEFAULT, runningInTauri } from "./dock";
+import { applyAlwaysOnTop, applyDockLayout, applyWindowOpacity, DOCK_WIDTH_DEFAULT, runningInTauri, startEdgeSnap } from "./dock";
 import { registerAnswerHotkeys, unregisterAnswerHotkeys, writeClipboard } from "./hotkey";
 
 const url = ref("");
@@ -71,6 +71,7 @@ const appVersionText = ref("");
 const selectedQuestionN = ref(null);
 const selectedPartIndex = ref(0);
 const hotkeyHint = "Ctrl+Shift+C";
+let stopEdgeSnap = () => {};
 const hotkeyNavHint = "Ctrl+Shift+↑/↓ 换题，←/→ 换空";
 const keyPage = "https://platform.deepseek.com/api_keys";
 const dockSide = ref("off");
@@ -439,6 +440,7 @@ function normalizeDockOpacity(value) {
 
 async function changeDockSide(value) {
   const next = value || "off";
+  if (next === dockSide.value) return;
   dockSide.value = next;
   showDockSettings.value = next === "off";
   if (next !== "off") {
@@ -825,12 +827,23 @@ onMounted(async () => {
     appVersionText.value = "";
   }
   await loadSettings();
+  if (tauriChrome.value) {
+    try {
+      stopEdgeSnap = await startEdgeSnap({
+        current: async () => ({ docked: isDocked.value, dockSide: dockSide.value }),
+        apply: (side) => changeDockSide(side),
+      });
+    } catch {
+      stopEdgeSnap = () => {};
+    }
+  }
   if (appVersionText.value) {
     await runUpdateCheck({ toast: false, clearFailed: true });
   }
 });
 
 onUnmounted(() => {
+  stopEdgeSnap();
   unregisterAnswerHotkeys().catch(() => {});
 });
 
@@ -1222,7 +1235,7 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
             @change="changeDockSide"
           />
           <div class="save-hint">
-            贴在左或右侧并可选置顶，方便浏览器做题时对照答案。获取答案后第一题已选中，用
+            贴在左或右侧并可选置顶，方便浏览器做题时对照答案。把窗口拖到屏幕左或右边缘松开，也会自动变成贴边；再拖离边缘就恢复。下拉选项仍然可用。获取答案后第一题已选中，用
             {{ hotkeyNavHint }}，{{ hotkeyHint }} 复制。不必再点软件窗口。
           </div>
         </div>
@@ -1726,7 +1739,7 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
         <h2>窗口置顶</h2>
         <p>标题栏右侧图钉图标可开关「总在最前」，常规窗口与贴边模式共用；贴边设置里仍保留文字开关。下次打开会记住上次选择。</p>
         <h2>贴边做题</h2>
-        <p>在「贴边做题」里选贴在屏幕左侧或右侧。窗口会收成窄栏并占满工作区高度，可选「窗口置顶」以免被挡住。贴边时顶部有「作业地址」面板可粘贴链接并获取答案，可点「收起地址」隐藏；「设置」展开模型等选项。下次打开会记住上次模式。切屏是否被平台记录与贴边无关，见 README 说明。</p>
+        <p>在「贴边做题」里选贴在屏幕左侧或右侧。也可以把窗口拖到屏幕左或右边缘后松开，自动变成同样的贴边栏；再拖离边缘会恢复常规窗口。下拉选项仍然保留。窗口会收成窄栏并占满工作区高度，可选「窗口置顶」以免被挡住。贴边时顶部有「作业地址」面板可粘贴链接并获取答案，可点「收起地址」隐藏；「设置」展开模型等选项。下次打开会记住上次模式。切屏是否被平台记录与贴边无关，见 README 说明。</p>
         <h2>检查更新</h2>
         <p>
           发现新版本后点「立即更新」：软件在后台下载安装包，并静默覆盖安装到当前软件所在目录，不打开浏览器、不弹出安装向导、不用选择路径。装完后程序会自动关闭并重新打开。
