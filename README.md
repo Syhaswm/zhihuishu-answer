@@ -1,6 +1,6 @@
 # 智慧树答题
 
-桌面工具。粘贴智慧树作业页地址后，读取题目并用 DeepSeek 生成参考答案。支持普通作业页和 AI 教学中心答题页。程序只读题目，不会交卷。
+桌面工具。粘贴智慧树作业页地址后，读取题目并用你选择的模型生成参考答案。支持普通作业页、考试页和 AI 教学中心答题页。程序只读题目，不向网页注入脚本，也不会交卷或自动填写。
 
 当前版本：1.9.15
 
@@ -10,11 +10,11 @@
 
 使用、下载或运行本软件，即表示你已经阅读并同意以下内容：
 
-1. 软件不会代替你交卷，也不会自动把答案填进网页。是否提交、提交什么，由你自己决定。
+1. 软件不会代替你交卷，也不会向作业页注入脚本或自动填写。是否提交、提交什么，由你自己决定。贴边和快捷键只是方便对照，不能阻止作业页记录切屏。
 2. 你必须遵守所在学校、课程以及智慧树平台的考核和学术规范。因使用本软件引起的成绩认定、课程处分、账号限制或其他后果，由使用者自行承担。
 3. 参考答案可能错误、不完整或与评分标准不符。提交前必须自行核对，不能把模型输出直接当作标准答案。
 4. 本软件与智慧树、Polymas、DeepSeek 及其关联方没有隶属、代理或授权关系。页面结构或接口变化后，软件可能无法继续使用。
-5. 登录信息和 DeepSeek API Key 保存在运行软件的这台电脑上，包括 `cookie.txt`、`apikey.txt` 和 `profile` 目录。请勿把这些文件发给他人，也不要提交到仓库。调用 DeepSeek 产生的费用由你自己的账户承担。
+5. 登录信息和各厂商 API Key 保存在运行软件的这台电脑上，包括 `cookie.txt`、`apikey.txt`、`settings.json` 和 `profile` 目录。请勿把这些文件发给他人，也不要提交到仓库。调用模型产生的费用由你自己的账户承担。
 6. 软件按现状提供，不作任何明示或暗示的保证，包括适用性、准确性、不中断和不被平台限制。作者不就数据丢失、账号异常、接口费用、成绩变化或任何直接、间接损失承担责任。
 
 若你不同意以上内容，请不要使用本软件。
@@ -35,13 +35,13 @@ Copyright (C) 2026 Zephyr
 
 1. 点「登录账号」，在弹出的窗口登录正在做这份作业的智慧树账号。换人时点「切换账号」。
 2. 在浏览器打开正在做的作业，把地址栏整段地址粘贴到软件里。多份作业每行一个。
-3. 填入 DeepSeek API Key，点「获取答案」。
+3. 选模型并填写该厂商的 API Key（本地 Ollama / LM Studio 可以不填），点「获取答案」。默认是 DeepSeek，也可以换成通义千问、智谱、Kimi、豆包、OpenAI、Gemini，或自定义兼容接口。
 
 普通作业页路径里有 `/webExamList/dohomework/` 或 `/webExamList/doexamination/`。考试页（`doexamination`）的选择题选项顺序每次打开都会打乱，软件只给出选项原文，请按文字对照，不要按字母。AI 教学中心作业页路径里有 `/exam-hub/` 和 `answer-homework`。
 
-更细的操作步骤见 [使用说明](使用说明.md)。源码仓库：[Gitee](https://gitee.com/Syhaswm/zhihuishu-answer) · [GitHub](https://github.com/Syhaswm/zhihuishu-answer)。安装包：[Gitee Releases](https://gitee.com/Syhaswm/zhihuishu-answer/releases) · [GitHub Releases](https://github.com/Syhaswm/zhihuishu-answer/releases)（内容同步）。
+贴边、拖到屏幕左右边缘吸附、题号搜索、快捷键复制、断点续答、用量查询和导出 Markdown 的步骤见 [使用说明](使用说明.md)，软件里点「帮助」是同一套说明。
 
-发行版里的 `智慧树答题-Setup.exe` 自带答题服务，安装后不需要再装 Python。源码在本仓库。
+源码仓库：[Gitee](https://gitee.com/Syhaswm/zhihuishu-answer) · [GitHub](https://github.com/Syhaswm/zhihuishu-answer)。安装包只从发行版下载名为 `智慧树答题-Setup.exe` 的文件：[Gitee Releases](https://gitee.com/Syhaswm/zhihuishu-answer/releases) · [GitHub Releases](https://github.com/Syhaswm/zhihuishu-answer/releases)（内容同步）。安装包未做代码签名，火绒或 Windows SmartScreen 可能提示风险；请核对文件名和发布页，不要运行来源不明的同名程序。安装后不需要再装 Python。
 
 ## 本地数据
 
