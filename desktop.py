@@ -215,6 +215,7 @@ class Api:
             "modelPresets": self._all_presets(pref),
             "tokenLimitWan": self._token_limit_wan(pref),
             "monthUsage": self._month_usage_view(pref),
+            "petEnabled": pref.get("petEnabled", True) is not False,
             "providers": answer.PROVIDERS,
             "files": self._answer_files(),
         }
@@ -267,6 +268,12 @@ class Api:
         data["tokenLimitWan"] = round(value, 1)
         self._pref_path().write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         return {"ok": True, "tokenLimitWan": data["tokenLimitWan"]}
+
+    def set_pet_enabled(self, enabled):
+        data = self._read_pref()
+        data["petEnabled"] = bool(enabled)
+        self._pref_path().write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        return {"ok": True, "petEnabled": data["petEnabled"]}
 
     def remember_recent_urls(self, items):
         data = self._read_pref()

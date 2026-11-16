@@ -156,6 +156,10 @@ class TokenLimitIn(BaseModel):
     wan: float = 0
 
 
+class PetIn(BaseModel):
+    enabled: bool = True
+
+
 class RecentItem(BaseModel):
     url: str = ""
     title: str = ""
@@ -266,6 +270,11 @@ def delete_preset(body: PresetDeleteIn):
 @app.post("/api/settings/token-limit")
 def set_token_limit(body: TokenLimitIn):
     return api.set_token_limit(body.wan)
+
+
+@app.post("/api/settings/pet")
+def set_pet(body: PetIn):
+    return api.set_pet_enabled(body.enabled)
 
 
 @app.post("/api/answers/markdown")

@@ -77,6 +77,7 @@ const keyPage = "https://platform.deepseek.com/api_keys";
 const dockSide = ref("off");
 const dockWidth = ref(DOCK_WIDTH_DEFAULT);
 const dockOnTop = ref(true);
+const petEnabled = ref(true);
 const tauriChrome = ref(false);
 const dockOpacity = ref(100);
 const dockOpacityOptions = [
@@ -409,6 +410,7 @@ async function loadSettings() {
   dockSide.value = data.dockSide || "off";
   dockWidth.value = data.dockWidth || DOCK_WIDTH_DEFAULT;
   dockOnTop.value = data.dockOnTop !== false;
+  petEnabled.value = data.petEnabled !== false;
   dockOpacity.value = normalizeDockOpacity(data.dockOpacity);
   answerShowReason.value = data.answerShowReason === true;
   const font = String(data.answerFontSize || "medium").toLowerCase();
@@ -493,9 +495,32 @@ async function windowToggleMaximize() {
   }
 }
 
+async function setPetWindow(visible) {
+  if (!(await runningInTauri())) return;
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("set_pet_visible", { visible });
+}
+
+async function changePetEnabled(event) {
+  const enabled = isChecked(event);
+  petEnabled.value = enabled;
+  try {
+    await api.setPetEnabled(enabled);
+    await setPetWindow(enabled);
+    Toast.success(enabled ? "边缘宠物已显示" : "边缘宠物已隐藏");
+  } catch (err) {
+    Toast.warning(err.message || "宠物设置失败");
+  }
+}
+
 async function windowClose() {
   const { getCurrentWindow } = await import("@tauri-apps/api/window");
-  await getCurrentWindow().close();
+  const win = getCurrentWindow();
+  if (petEnabled.value && (await runningInTauri())) {
+    await win.hide();
+    return;
+  }
+  await win.close();
 }
 
 async function changeDockOpacity(value) {
@@ -827,6 +852,9 @@ onMounted(async () => {
     appVersionText.value = "";
   }
   await loadSettings();
+  if (tauriChrome.value) {
+    setPetWindow(petEnabled.value).catch(() => {});
+  }
   if (tauriChrome.value) {
     try {
       stopEdgeSnap = await startEdgeSnap({
@@ -1182,7 +1210,14 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
         </button>
         <button type="button" class="titlebar-btn" title="最小化" @click="windowMinimize">—</button>
         <button type="button" class="titlebar-btn" title="最大化" @click="windowToggleMaximize">□</button>
-        <button type="button" class="titlebar-btn titlebar-btn--close" title="关闭" @click="windowClose">×</button>
+        <button
+          type="button"
+          class="titlebar-btn titlebar-btn--close"
+          :title="petEnabled ? '收起到宠物' : '关闭'"
+          @click="windowClose"
+        >
+          ×
+        </button>
       </div>
     </div>
     <div class="shell">
@@ -1238,6 +1273,13 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
             贴在左或右侧并可选置顶，方便浏览器做题时对照答案。把窗口拖到屏幕左或右边缘松开，也会自动变成贴边；再拖离边缘就恢复。下拉选项仍然可用。获取答案后第一题已选中，用
             {{ hotkeyNavHint }}，{{ hotkeyHint }} 复制。不必再点软件窗口。
           </div>
+        </div>
+        <div class="save-row">
+          <div>
+            <div class="field-label">边缘宠物</div>
+            <div class="save-hint">挂在屏幕边缘。点它打开主窗口；关掉主窗口后它还在。在宠物上右键可以退出。</div>
+          </div>
+          <Switch :checked="petEnabled" @change="changePetEnabled" />
         </div>
         <div v-if="isDocked" class="save-row dock-top-row">
           <div>
@@ -1742,6 +1784,8 @@ watch([url, provider, modelName, baseUrl, thinking], () => {
         </ol>
         <h2>窗口置顶</h2>
         <p>标题栏右侧图钉图标可开关「总在最前」，常规窗口与贴边模式共用；贴边设置里仍保留文字开关。下次打开会记住上次选择。</p>
+        <h2>边缘宠物</h2>
+        <p>屏幕边缘有一只小宠物，点一下会打开主窗口。主窗口点关闭会收起来，宠物还在。在宠物的手上可以拖动，松手后会吸到最近的左、右或上边缘。右键宠物可选「退出」，整个软件才会结束。</p>
         <h2>贴边做题</h2>
         <p>在「贴边做题」里选贴在屏幕左侧或右侧。也可以把窗口拖到屏幕左或右边缘后松开，自动变成同样的贴边栏；再拖离边缘会恢复常规窗口。下拉选项仍然保留。窗口会收成窄栏并占满工作区高度，可选「窗口置顶」以免被挡住。贴边时顶部有「作业地址」面板可粘贴链接并获取答案，可点「收起地址」隐藏；「设置」展开模型等选项。下次打开会记住上次模式。切屏是否被平台记录与贴边无关，见 README 说明。</p>
         <h2>检查更新</h2>

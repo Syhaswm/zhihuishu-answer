@@ -139,6 +139,14 @@ export function deleteModelPreset(id) {
   });
 }
 
+export function setPetEnabled(enabled) {
+  return request("/api/settings/pet", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+}
+
 export function setTokenLimit(wan) {
   return request("/api/settings/token-limit", {
     method: "POST",

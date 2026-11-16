@@ -12,3 +12,8 @@ commands.allow = ["app_version"]
 identifier = "allow-dock-window"
 description = "贴边做题模式调整窗口"
 commands.allow = ["dock_apply", "dock_restore", "set_window_opacity", "set_always_on_top"]
+
+[[permission]]
+identifier = "allow-pet"
+description = "屏幕边缘宠物显示主窗口或退出"
+commands.allow = ["show_main", "set_pet_visible", "quit_app"]

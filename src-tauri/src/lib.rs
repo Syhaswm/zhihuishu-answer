@@ -311,6 +311,50 @@ fn start_api(token: &str) -> Option<Child> {
     command.spawn().ok()
 }
 
+fn park_pet(window: &WebviewWindow) -> Result<(), String> {
+    let monitor = window
+        .current_monitor()
+        .map_err(|e| e.to_string())?
+        .ok_or("找不到当前显示器")?;
+    let scale = monitor.scale_factor();
+    let work = monitor.work_area();
+    let width = (96.0 * scale).round() as u32;
+    let height = (120.0 * scale).round() as u32;
+    let x = work.position.x + work.size.width as i32 - width as i32;
+    let y = work.position.y + (72.0 * scale).round() as i32;
+    window
+        .set_size(PhysicalSize::new(width, height))
+        .map_err(|e| e.to_string())?;
+    window
+        .set_position(PhysicalPosition::new(x, y))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn show_main(app: tauri::AppHandle) -> Result<(), String> {
+    let window = app.get_webview_window("main").ok_or("找不到主窗口")?;
+    let _ = window.unminimize();
+    window.show().map_err(|e| e.to_string())?;
+    window.set_focus().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn set_pet_visible(app: tauri::AppHandle, visible: bool) -> Result<(), String> {
+    let window = app.get_webview_window("pet").ok_or("找不到宠物")?;
+    if visible {
+        window.show().map_err(|e| e.to_string())
+    } else {
+        window.hide().map_err(|e| e.to_string())
+    }
+}
+
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 pub fn run() {
     let token = random_token();
     tauri::Builder::default()
@@ -331,9 +375,17 @@ pub fn run() {
             set_always_on_top,
             dock_apply,
             dock_restore,
-            set_window_opacity
+            set_window_opacity,
+            show_main,
+            set_pet_visible,
+            quit_app
         ])
-        .setup(|_app| Ok(()))
+        .setup(|app| {
+            if let Some(pet) = app.get_webview_window("pet") {
+                let _ = park_pet(&pet);
+            }
+            Ok(())
+        })
         .build(tauri::generate_context!())
         .expect("启动窗口失败")
         .run(|app, event| {
