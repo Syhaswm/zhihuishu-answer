@@ -26,6 +26,10 @@ struct DockState {
     active: Mutex<bool>,
 }
 
+struct PetState {
+    visible: Mutex<bool>,
+}
+
 fn normalize_opacity(percent: u8) -> u8 {
     match percent {
         100 => 100,
@@ -341,8 +345,17 @@ fn show_main(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn set_pet_visible(app: tauri::AppHandle, visible: bool) -> Result<(), String> {
-    let window = app.get_webview_window("pet").ok_or("找不到宠物")?;
+fn set_pet_visible(
+    app: tauri::AppHandle,
+    state: tauri::State<PetState>,
+    visible: bool,
+) -> Result<(), String> {
+    if let Ok(mut guard) = state.visible.lock() {
+        *guard = visible;
+    }
+    let Some(window) = app.get_webview_window("pet") else {
+        return Ok(());
+    };
     if visible {
         window.show().map_err(|e| e.to_string())
     } else {
@@ -353,6 +366,62 @@ fn set_pet_visible(app: tauri::AppHandle, visible: bool) -> Result<(), String> {
 #[tauri::command]
 fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
+}
+
+fn create_pet(app: &tauri::AppHandle) -> Result<(), String> {
+    if app.get_webview_window("pet").is_some() {
+        return Ok(());
+    }
+    let browser_args =
+        "--proxy-server=direct:// --proxy-bypass-list=<-loopback>;localhost;127.0.0.1;*.localhost";
+    let window = tauri::WebviewWindowBuilder::new(
+        app,
+        "pet",
+        tauri::WebviewUrl::App("index.html".into()),
+    )
+    .title("智慧树答题")
+    .inner_size(96.0, 120.0)
+    .resizable(false)
+    .decorations(false)
+    .transparent(false)
+    .shadow(false)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .focused(false)
+    .visible(true)
+    .additional_browser_args(browser_args)
+    .initialization_script("window.__ZHS_PET__=true")
+    .build()
+    .map_err(|err| err.to_string())?;
+    park_pet(&window)?;
+    let visible = app
+        .try_state::<PetState>()
+        .and_then(|state| state.visible.lock().ok().map(|guard| *guard))
+        .unwrap_or(true);
+    if !visible {
+        window.hide().map_err(|err| err.to_string())?;
+    }
+    Ok(())
+}
+
+fn schedule_pet(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(700));
+        let app_for_task = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if let Err(err) = create_pet(&app_for_task) {
+                write_startup_log(&format!("宠物窗口没能打开，主窗口继续使用: {err}"));
+            }
+        });
+    });
+}
+
+fn write_startup_log(text: &str) {
+    let path = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join("startup-error.txt")))
+        .unwrap_or_else(|| std::path::PathBuf::from("startup-error.txt"));
+    let _ = std::fs::write(path, text);
 }
 
 pub fn run() {
@@ -369,6 +438,9 @@ pub fn run() {
             saved: Mutex::new(None),
             active: Mutex::new(false),
         })
+        .manage(PetState {
+            visible: Mutex::new(true),
+        })
         .invoke_handler(tauri::generate_handler![
             api_token,
             app_version,
@@ -381,9 +453,7 @@ pub fn run() {
             quit_app
         ])
         .setup(|app| {
-            if let Some(pet) = app.get_webview_window("pet") {
-                let _ = park_pet(&pet);
-            }
+            schedule_pet(app.handle().clone());
             Ok(())
         })
         .build(tauri::generate_context!())

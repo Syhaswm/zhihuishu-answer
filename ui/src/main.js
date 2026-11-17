@@ -1,6 +1,6 @@
 import { createApp } from "vue";
 
-const pet = new URLSearchParams(window.location.search).get("pet") === "1";
+const pet = window.__ZHS_PET__ === true || new URLSearchParams(window.location.search).get("pet") === "1";
 
 async function boot() {
   if (pet) {
