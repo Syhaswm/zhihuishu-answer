@@ -383,7 +383,7 @@ fn create_pet(app: &tauri::AppHandle) -> Result<(), String> {
     .inner_size(96.0, 120.0)
     .resizable(false)
     .decorations(false)
-    .transparent(false)
+    .transparent(true)
     .shadow(false)
     .always_on_top(true)
     .skip_taskbar(true)
